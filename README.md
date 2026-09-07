@@ -21,8 +21,10 @@ exchange rates.
 |---|---|---|
 | 0 | Repo scaffold, Flask, Railway config | done |
 | 1 | Psychrometric core + audit test suite | done |
-| 2 | Cavity air temperature from f | pending |
-| 3 | Hourly moisture balance + NSRDB TMY | pending |
+| 2 | Cavity air temperature from f | done |
+| 3a | Hourly moisture balance engine | done |
+| 3b | NSRDB TMY weather + /calculate endpoint | done |
+| 3c | Window geometry, per-window totals | done |
 | 4 | ACH bracket sweep + Excel export | pending |
 | 5 | Frontend: Explain / Model / Present | pending |
 | 6 | Railway deploy + validation | pending |
@@ -49,7 +51,7 @@ python app.py               # http://localhost:8080
 pytest
 ```
 
-`tests/test_psychro.py` is written to be **read**, not just run. Every
+`tests/` is written to be **read**, not just run. Every
 assertion cites its source: `[ASHRAE]` for a published table value,
 `[DERIVED]` for arithmetic worked longhand in the docstring, `[LIVE]` for a
 cross-check against the deployed condensation_calc. A reviewer can audit
@@ -77,8 +79,32 @@ Never commit either. `.env` is gitignored.
 | Route | Purpose |
 |---|---|
 | `/` | Application |
-| `/config` | Public front-end config; reports whether weather is configured |
+| `/config` | Public front-end config, ACH presets, assumption labels |
 | `/healthz` | Liveness probe + engine self-check |
+| `/calculate` | Run the model. See below. |
+
+### `/calculate` parameters
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `address` | required | Free text, geocoded via Mapbox |
+| `f_cold` | required | Temperature factor, cavity face of the existing pane |
+| `f_warm` | estimated | Same for the new IGU. Supply it if WINDOW gives it. |
+| `u_assembly` | 1.7 | W/m²K. Only used to estimate `f_warm`. |
+| `r_cavity` | 0.17 | m²K/W. Only used to estimate `f_warm`. |
+| `t_in` | 70 | °F, interior air |
+| `rh_in` | 35 | %, interior |
+| `ach` | `moderate` | A preset name **or any number** |
+| `vent_interior` | 1.0 | 1 = vents to room, 0 = vents to outdoors |
+| `width_in`, `height_in`, `offset_in` | — / — / 0.6024 | Enables per-window litres |
+| `sweep` | false | Also run every ACH preset |
+
+Example:
+
+```
+/calculate?address=277+Park+Avenue,+New+York,+NY&f_cold=0.013
+  &u_assembly=0.70&ach=moderate&width_in=60&height_in=96&sweep=true
+```
 
 ## Validation anchors
 
@@ -87,7 +113,26 @@ Never commit either. `.env` is gitignored.
 | Dew point, 70 °F / 35% RH | 41.09 °F | Live condensation_calc |
 | p_ws at 25 °C | 3169.2 Pa | ASHRAE Fundamentals Ch.1 table |
 | Condensation hours, 277 Park, f = 0.300, 70 °F / 35% RH | 676 / 8,760 | Live condensation_calc |
+| Hourly surface temps vs live app, real TMY | < 0.01 °F max error | Live condensation_calc |
 
-That last one is the regression target for Chunk 4: at a very high air
-exchange rate the cavity must track the room, so the new model **must**
-reproduce ~676 hours. If it doesn't, the moisture engine is wrong.
+**The 676 anchor is met exactly** on real NSRDB TMY data
+(`test_room_dew_point_criterion_reproduces_676_hours`). Our engine scores the
+room-dew-point criterion as a by-product of every run and lands on the same
+integer, not merely close to it.
+
+Note that our own `hours_condensing` is *higher* than 676, and correctly so:
+the retained condensate film keeps the cavity saturated after room air alone
+would have stopped condensing. The old model has no liquid inventory and
+cannot represent that. Do not "fix" this by forcing agreement.
+
+## Unvalidated assumptions
+
+Four numbers do real work and none is measured. All are labelled in code and
+surfaced in the `/config` and `/calculate` responses.
+
+| Assumption | Value | How to fix |
+|---|---|---|
+| ACH presets | 0.1 – 100 | Tracer-gas or pressure-decay test |
+| Retained condensate film | 0.1 kg/m² | Lab or literature |
+| `f_warm` estimator | `f_cold + R_cav·U` | Ask Arnold — WINDOW reports it directly |
+| 277 Park module dimensions | 1.5 × 2.5 m | Real curtain wall dimensions |
