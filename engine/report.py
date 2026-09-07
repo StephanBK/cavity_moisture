@@ -249,6 +249,7 @@ def _write_summary(wb, summary, meta, last_row: int, has_sweep: bool) -> None:
     _label(ws, r, "Weather source", meta.get("weather_source", "NSRDB PSM3 TMY")); r += 1
     _label(ws, r, "Weather station", meta.get("station_id", "")); r += 1
     _label(ws, r, "Elevation", meta.get("elevation_m", 0.0), unit="m"); r += 1
+    total_hours_row = r  # captured, never hardcoded - see below
     _label(ws, r, "Hours simulated", f"=COUNT('{RAW}'!{COL['hour']}2:{COL['hour']}{last_row})"); r += 2
 
     r = _section(ws, r, "ASSEMBLY")
@@ -297,10 +298,28 @@ def _write_summary(wb, summary, meta, last_row: int, has_sweep: bool) -> None:
            f"=SUMIFS('{RAW}'!{COL['is_condensing']}2:{COL['is_condensing']}{last_row},"
            f"'{RAW}'!{COL['is_condensing']}2:{COL['is_condensing']}{last_row},1)",
            unit="hr"); r += 1
-    total_hours_row = 8  # "Hours simulated" written above
+    # total_hours_row was captured where the row was actually written. It
+    # used to be hardcoded to 8 while the row was 9, so every share-of-year
+    # figure divided by Elevation (0) and IFERROR reported 0%.
     pct = _label(ws, r, "Share of year with condensation",
                  f"=IFERROR(B{hours_row}/B{total_hours_row},0)")
     pct.number_format = "0.0%"; r += 1
+
+    # Liquid PRESENT, not liquid DEPOSITING. Counted with COUNTIF over the
+    # standing-water column so the workbook recalculates it like every other
+    # summary figure. Always >= "Hours with condensation": water laid down
+    # overnight is still on the glass in the morning.
+    water_row = r
+    _label(ws, r, "Hours with water on the glass",
+           f"=COUNTIF('{RAW}'!{COL['surface_water_g']}2:"
+           f"{COL['surface_water_g']}{last_row},\">0\")",
+           unit="hr"); r += 1
+    pctw = _label(ws, r, "Share of year with water on the glass",
+                  f"=IFERROR(B{water_row}/B{total_hours_row},0)")
+    pctw.number_format = "0.0%"; r += 1
+    ws.cell(row=r, column=1, value="Occupant-facing metric. Not monotonic in "
+            "ACH - use condensed mass to compare vent designs.").font = NOTE_FONT
+    r += 1
 
     cond_row = r
     c = _label(ws, r, "Condensed water (per m2 of glazing)",

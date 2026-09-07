@@ -62,6 +62,33 @@ _WATER = (
 # Unit conversion - the ONLY place Fahrenheit is allowed
 # ---------------------------------------------------------------------------
 
+#: 1 Btu/(hr*ft^2*degF) = 5.678263... W/(m^2*K). Exact by definition of the
+#: international Btu, the foot and the Fahrenheit degree.
+W_M2K_PER_BTU_HR_FT2_F = 5.678263341113646
+
+
+def u_ip_to_si(u_ip: float) -> float:
+    """U-factor, Btu/(hr*ft^2*degF) -> W/(m^2*K)."""
+    return u_ip * W_M2K_PER_BTU_HR_FT2_F
+
+
+def u_si_to_ip(u_si: float) -> float:
+    """U-value, W/(m^2*K) -> Btu/(hr*ft^2*degF)."""
+    return u_si / W_M2K_PER_BTU_HR_FT2_F
+
+
+def r_ip_to_si(r_ip: float) -> float:
+    """R-value, hr*ft^2*degF/Btu -> m^2*K/W. R and U convert by the same
+    factor in OPPOSITE directions, which is why the dimensionless product
+    r_cavity * u_assembly is invariant across the two systems."""
+    return r_ip / W_M2K_PER_BTU_HR_FT2_F
+
+
+def r_si_to_ip(r_si: float) -> float:
+    """R-value, m^2*K/W -> hr*ft^2*degF/Btu."""
+    return r_si * W_M2K_PER_BTU_HR_FT2_F
+
+
 def f_to_c(t_f: float) -> float:
     """Fahrenheit -> Celsius. Exact rational form, no rounded 0.5556."""
     return (t_f - 32.0) * 5.0 / 9.0

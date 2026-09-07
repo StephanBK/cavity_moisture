@@ -93,6 +93,14 @@ ACH_PRESETS_ARE_ESTIMATES = True
 #: ESTIMATE, not measured. Like the ACH presets, label it as such in any UI.
 MAX_SURFACE_FILM_KG_PER_M2 = 0.1
 
+#: Liquid loading above which condensate is treated as VISIBLE to an
+#: occupant looking through the glass. Default 0.0 means "any liquid at
+#: all", which introduces NO new assumption - it reports exactly what the
+#: model tracks. A non-zero value is an ESTIMATE and must be labelled as
+#: one wherever it surfaces: no measurement of the optical threshold for
+#: condensate on vertical glass has been made for this project.
+VISIBLE_FILM_KG_PER_M2 = 0.0
+
 
 # ---------------------------------------------------------------------------
 # Results
@@ -146,6 +154,9 @@ class RunSummary:
     total_condensed_litres_per_window: float | None = None
     total_drained_litres_per_window: float | None = None
     peak_surface_water_litres_per_window: float | None = None
+    hours_water_present: int = 0
+    pct_water_present: float = 0.0
+    visible_threshold_kg_per_m2: float = 0.0
     hours: list[HourResult] = field(default_factory=list, repr=False)
 
 
@@ -414,6 +425,7 @@ def run_year(
     gap_m: float = 0.0153,
     elevation_m: float = 0.0,
     max_film_kg: float = MAX_SURFACE_FILM_KG_PER_M2,
+    visible_film_kg_per_m2: float = VISIBLE_FILM_KG_PER_M2,
     substeps: int = 1,
     spinup_passes: int = 1,
     keep_hours: bool = True,
@@ -482,6 +494,7 @@ def run_year(
         total_condensed = 0.0
         peak_water = 0.0
         hours_condensing = 0
+        hours_water_present = 0
         hours_condensing_room = 0
         hours_saturated = 0
         total_drained = 0.0
@@ -535,6 +548,13 @@ def run_year(
             condensing = hour_condensed > 0.0
             if condensing:
                 hours_condensing += 1
+
+            # Liquid PRESENT, not liquid DEPOSITING. Water laid down at 3am
+            # is still on the glass at 9am when someone looks at it, so this
+            # count is always >= hours_condensing. It is the occupant-facing
+            # number; condensed mass remains the engineering one.
+            if surface_water > visible_film_kg_per_m2:
+                hours_water_present += 1
 
             # The assumption we are replacing, scored side by side.
             # The assumption we are replacing, scored on the same ceiling so
@@ -598,6 +618,9 @@ def run_year(
         peak_surface_water_litres_per_window=(
             geometry.litres(peak_water) if geometry else None
         ),
+        hours_water_present=hours_water_present,
+        pct_water_present=100.0 * hours_water_present / n,
+        visible_threshold_kg_per_m2=visible_film_kg_per_m2,
         hours=hours,
     )
 

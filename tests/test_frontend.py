@@ -63,7 +63,7 @@ def test_every_endpoint_the_page_calls_exists(html, client):
 def test_page_sends_every_parameter_the_api_needs(html):
     """[API] A missing address or f_cold returns 400, so the page must send
     both. Checked here rather than discovered in the browser."""
-    for name in ("address", "f_cold", "u_assembly", "t_in", "rh_in", "ach",
+    for name in ("address", "f_cold", "u_ip", "t_in", "rh_in", "ach",
                  "vent_interior", "width_in", "height_in", "offset_in"):
         assert name in html, f"page never sends {name!r}"
 

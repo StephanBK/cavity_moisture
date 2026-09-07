@@ -119,8 +119,19 @@ def _parse_params() -> dict:
         raise BadRequest("Missing required parameter 'address'")
 
     f_cold = _float("f_cold", minimum=0.0, maximum=1.0)
-    u_assembly = _float("u_assembly", default=1.7, minimum=0.01)
-    r_cavity = _float("r_cavity", default=0.17, minimum=0.001)
+    # US practice quotes U-factor in Btu/(hr*ft^2*degF). The engine is SI
+    # throughout (design rule 1), so IP is converted here at the boundary,
+    # exactly as t_in and width_in are. The SI parameters remain accepted so
+    # existing URLs and saved reports cannot be silently reinterpreted.
+    if request.args.get("u_ip"):
+        u_assembly = psychro.u_ip_to_si(_float("u_ip", minimum=0.001, maximum=2.0))
+    else:
+        u_assembly = _float("u_assembly", default=1.7, minimum=0.01)
+
+    if request.args.get("r_ip"):
+        r_cavity = psychro.r_ip_to_si(_float("r_ip", minimum=0.001, maximum=100.0))
+    else:
+        r_cavity = _float("r_cavity", default=0.17, minimum=0.001)
 
     if request.args.get("f_warm"):
         f_warm = _float("f_warm", minimum=0.0, maximum=1.0)
@@ -171,6 +182,8 @@ def _summary_dict(summary) -> dict:
         "vent_interior_fraction": summary.vent_interior_fraction,
         "hours_total": summary.hours_total,
         "hours_condensing": summary.hours_condensing,
+        "hours_water_present": summary.hours_water_present,
+        "pct_water_present": round(summary.pct_water_present, 3),
         "hours_saturated": summary.hours_saturated,
         "pct_condensing": round(summary.pct_condensing, 3),
         "condensed_g_per_m2": round(summary.total_condensed_kg_per_m2 * 1000, 3),
@@ -288,8 +301,10 @@ def calculate():
                    existing exterior pane, from WINDOW/THERM.
     f_warm         optional. Same for the cavity-facing face of the new IGU.
                    If omitted, estimated from u_assembly and r_cavity.
-    u_assembly     default 1.7 W/m2K. Only used to estimate f_warm.
-    r_cavity       default 0.17 m2K/W. Only used to estimate f_warm.
+    u_ip           U-factor in Btu/(hr*ft^2*degF). Preferred. 0.30 = 1.7 W/m2K.
+    u_assembly     same in W/m2K, default 1.7. Ignored when u_ip is given.
+    r_ip           cavity R in hr*ft^2*degF/Btu. 0.97 = 0.17 m2K/W.
+    r_cavity       same in m2K/W, default 0.17. Ignored when r_ip is given.
     t_in           default 70 degF. Interior air temperature.
     rh_in          default 35 %. Interior relative humidity.
     ach            default "moderate". A preset name or any number.
@@ -317,7 +332,9 @@ def calculate():
                 "f_warm": round(params["f_warm"], 4),
                 "f_warm_source": params["f_warm_source"],
                 "u_assembly": params["u_assembly"],
+                "u_assembly_ip": round(psychro.u_si_to_ip(params["u_assembly"]), 4),
                 "r_cavity": params["r_cavity"],
+                "r_cavity_ip": round(psychro.r_si_to_ip(params["r_cavity"]), 4),
                 "t_in_f": params["t_in_f"],
                 "rh_in_pct": params["rh_in_pct"],
                 "ach": params["ach"],
