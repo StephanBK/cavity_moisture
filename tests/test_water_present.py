@@ -93,9 +93,37 @@ def test_a_dry_year_reports_no_water(rh_flat):
 # The threshold is an estimate and defaults to "no assumption"  [SPEC]
 # ---------------------------------------------------------------------------
 
-def test_default_threshold_introduces_no_assumption():
-    """Default 0.0 means 'any liquid', which is exactly what is modelled."""
-    assert VISIBLE_FILM_KG_PER_M2 == 0.0
+def test_hours_water_present_is_threshold_free(real_year, rh_flat):
+    """hours_water_present counts ANY liquid and must not move with the
+    threshold. It is the raw modelled fact; hours_water_visible is the judged
+    one. Keeping them separate means the estimate can be revised without
+    losing what the model actually computed."""
+    a = _run(real_year, rh_flat, 5.0, visible_film_kg_per_m2=0.0)
+    b = _run(real_year, rh_flat, 5.0, visible_film_kg_per_m2=0.05)
+    assert a.hours_water_present == b.hours_water_present
+    assert b.hours_water_visible < a.hours_water_visible
+
+
+def test_visible_is_never_more_than_present(real_year, rh_flat):
+    r = _run(real_year, rh_flat, 5.0)
+    assert r.hours_water_visible <= r.hours_water_present
+
+
+def test_the_default_threshold_is_five_microns():
+    """ESTIMATE, assumption #5. Non-zero deliberately: 'any liquid' counts
+    nanometre films as condensation, true thermodynamically and meaningless
+    to an occupant."""
+    assert VISIBLE_FILM_KG_PER_M2 == 0.005
+
+
+def test_sealed_and_vented_separate_under_any_plausible_threshold(real_year, rh_flat):
+    """The exact cut point is not load-bearing. A sealed cavity peaks around
+    a few microns; a vented one reaches the 100 um retained-film cap. Every
+    threshold from 1 to 50 um puts them on opposite sides."""
+    sealed = _run(real_year, rh_flat, 0.1, f_cold=0.013)
+    vented = _run(real_year, rh_flat, 5.0, f_cold=0.013)
+    assert sealed.peak_surface_water_kg_per_m2 * 1000 < 20.0
+    assert vented.peak_surface_water_kg_per_m2 * 1000 > 50.0
 
 
 def test_summary_reports_the_threshold_it_used(real_year, rh_flat):

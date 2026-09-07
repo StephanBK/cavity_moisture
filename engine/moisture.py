@@ -99,7 +99,15 @@ MAX_SURFACE_FILM_KG_PER_M2 = 0.1
 #: model tracks. A non-zero value is an ESTIMATE and must be labelled as
 #: one wherever it surfaces: no measurement of the optical threshold for
 #: condensate on vertical glass has been made for this project.
-VISIBLE_FILM_KG_PER_M2 = 0.0
+#: 1 g/m2 of water is a 1 micron film, so this is 5 microns.
+#: ESTIMATE, UNVALIDATED - assumption #5. No optical threshold for condensate
+#: on vertical glass has been measured for this project. It is defaulted to a
+#: non-zero value because the alternative ("any liquid") counts films of a few
+#: NANOMETRES as condensation, which is true thermodynamically and meaningless
+#: to an occupant. Sealed cavities peak around 0.2-3 um and vented ones reach
+#: the 100 um retained-film cap, so any threshold in the 1-50 um range
+#: separates them identically; the exact value is not load-bearing.
+VISIBLE_FILM_KG_PER_M2 = 0.005
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +164,8 @@ class RunSummary:
     peak_surface_water_litres_per_window: float | None = None
     hours_water_present: int = 0
     pct_water_present: float = 0.0
+    hours_water_visible: int = 0
+    pct_water_visible: float = 0.0
     visible_threshold_kg_per_m2: float = 0.0
     hours: list[HourResult] = field(default_factory=list, repr=False)
 
@@ -495,6 +505,7 @@ def run_year(
         peak_water = 0.0
         hours_condensing = 0
         hours_water_present = 0
+        hours_water_visible = 0
         hours_condensing_room = 0
         hours_saturated = 0
         total_drained = 0.0
@@ -553,8 +564,10 @@ def run_year(
             # is still on the glass at 9am when someone looks at it, so this
             # count is always >= hours_condensing. It is the occupant-facing
             # number; condensed mass remains the engineering one.
-            if surface_water > visible_film_kg_per_m2:
+            if surface_water > 0.0:
                 hours_water_present += 1
+            if surface_water > visible_film_kg_per_m2:
+                hours_water_visible += 1
 
             # The assumption we are replacing, scored side by side.
             # The assumption we are replacing, scored on the same ceiling so
@@ -620,6 +633,8 @@ def run_year(
         ),
         hours_water_present=hours_water_present,
         pct_water_present=100.0 * hours_water_present / n,
+        hours_water_visible=hours_water_visible,
+        pct_water_visible=100.0 * hours_water_visible / n,
         visible_threshold_kg_per_m2=visible_film_kg_per_m2,
         hours=hours,
     )

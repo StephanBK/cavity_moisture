@@ -128,6 +128,10 @@ def _parse_params() -> dict:
     else:
         u_assembly = _float("u_assembly", default=1.7, minimum=0.01)
 
+    # Visible-film threshold in MICRONS at the boundary (1 g/m2 = 1 um).
+    # ESTIMATE - see VISIBLE_FILM_KG_PER_M2. Labelled wherever it surfaces.
+    visible_um = _float("visible_um", default=5.0, minimum=0.0, maximum=1000.0)
+
     if request.args.get("r_ip"):
         r_cavity = psychro.r_ip_to_si(_float("r_ip", minimum=0.001, maximum=100.0))
     else:
@@ -152,6 +156,7 @@ def _parse_params() -> dict:
         "f_cold": f_cold,
         "u_assembly": u_assembly,
         "r_cavity": r_cavity,
+        "visible_um": visible_um,
         "f_warm": f_warm,
         "f_warm_source": f_warm_source,
         "t_in_f": _float("t_in", default=70.0, minimum=-40.0, maximum=120.0),
@@ -172,6 +177,8 @@ def _run_kwargs(params: dict, weather) -> dict:
         vent_interior_fraction=params["vent_interior"],
         geometry=params["geometry"],
         elevation_m=weather.elevation_m,
+        # microns -> kg/m2. 1 g/m2 is a 1 um film.
+        visible_film_kg_per_m2=params["visible_um"] / 1000.0,
     )
 
 
@@ -184,6 +191,9 @@ def _summary_dict(summary) -> dict:
         "hours_condensing": summary.hours_condensing,
         "hours_water_present": summary.hours_water_present,
         "pct_water_present": round(summary.pct_water_present, 3),
+        "hours_water_visible": summary.hours_water_visible,
+        "pct_water_visible": round(summary.pct_water_visible, 3),
+        "visible_threshold_um": round(summary.visible_threshold_kg_per_m2 * 1000.0, 3),
         "hours_saturated": summary.hours_saturated,
         "pct_condensing": round(summary.pct_condensing, 3),
         "condensed_g_per_m2": round(summary.total_condensed_kg_per_m2 * 1000, 3),
@@ -254,6 +264,11 @@ def config():
                 "ACH presets are engineering estimates, not measurements.",
                 "Retained condensate film (0.1 kg/m2) is an estimate.",
                 "Warm-surface f is estimated as f_cold + R_cav x U unless supplied.",
+                "Visible-film threshold (5 um default) is an estimate; no optical "
+                "threshold for condensate on vertical glass has been measured.",
+                "Solar gain is NOT modelled. Surface temperatures follow outdoor "
+                "AIR temperature only, so sunlit drying is absent and night-sky "
+                "radiative cooling is absent. Orientation has no effect.",
             ],
         }
     )
@@ -370,6 +385,7 @@ def calculate():
                 t_room_c=common["t_room_c"], rh_room=common["rh_room"],
                 vent_interior_fraction=params["vent_interior"],
                 geometry=params["geometry"], elevation_m=weather.elevation_m,
+                visible_film_kg_per_m2=params["visible_um"] / 1000.0,
             )
             payload["sweep"] = [
                 {"preset": name, **_summary_dict(r)}

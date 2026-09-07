@@ -405,6 +405,7 @@ function ModelView({inp,res}){
     h('dl',{className:'stats'},
       h('div',{className:'stat'},h('dt',null,'Hours with condensation'),h('dd',{className:'num'},s.hours_condensing.toLocaleString())),
       h('div',{className:'stat'},h('dt',null,'Hours water on the glass'),h('dd',{className:'num'},s.hours_water_present.toLocaleString()),h('dd',{className:'sub'},`${f1(s.pct_water_present)}% of the year`)),
+      h('div',{className:'stat'},h('dt',null,'Hours visible condensation'),h('dd',{className:'num'},s.hours_water_visible.toLocaleString()),h('dd',{className:'sub'},`film over ${f1(s.visible_threshold_um)} um - estimate`)),
       h('div',{className:'stat'},h('dt',null,'Cavity dew point, mean'),h('dd',{className:'num'},f1(s.cavity_dew_point_f.mean)+'°F')),
       h('div',{className:'stat'},h('dt',null,'Room dew point'),h('dd',{className:'num'},f1(s.room_dew_point_f)+'°F')),
       h('div',{className:'stat'},h('dt',null,'Drained out'),h('dd',{className:'num'},f1(s.drained_g_per_m2)+' g/m²'))),
