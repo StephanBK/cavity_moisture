@@ -195,3 +195,17 @@ def test_geocode_non_json_body_is_a_weather_error(monkeypatch):
     monkeypatch.setattr(weather.requests, "get", lambda *a, **k: FakeResponse(200, "<html>"))
     with pytest.raises(WeatherError, match="not JSON"):
         geocode("277 Park Avenue", token="pk.secret")
+
+
+# ---------------------------------------------------------------------------
+# Endpoint identity  [API]
+# ---------------------------------------------------------------------------
+
+def test_the_configured_endpoint_is_the_live_one():
+    """psm3-tmy-download and psm3-2-2-tmy-download both 404 as of Sept 2026;
+    GOES TMY v4.0.0 is the live dataset. Verified against the service. [API]"""
+    assert weather.NSRDB_TMY_URL == (
+        "https://developer.nlr.gov/api/nsrdb/v2/solar/"
+        "nsrdb-GOES-tmy-v4-0-0-download.csv"
+    )
+    assert "nrel.gov" not in weather.NSRDB_TMY_URL

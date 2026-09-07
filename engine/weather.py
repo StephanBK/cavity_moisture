@@ -38,7 +38,7 @@ from pathlib import Path
 import requests
 
 MAPBOX_GEOCODE_URL = "https://api.mapbox.com/search/geocode/v6/forward"
-NSRDB_TMY_URL = "https://developer.nlr.gov/api/nsrdb/v2/solar/psm3-tmy-download.csv"
+NSRDB_TMY_URL = "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-tmy-v4-0-0-download.csv"
 
 #: NSRDB attributes we request. Temperature and RH are what the moisture model
 #: needs; surface pressure lets us use measured rather than standard-atmosphere
