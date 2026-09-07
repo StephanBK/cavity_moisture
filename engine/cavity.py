@@ -252,3 +252,148 @@ def cavity_volume(gap_m: float = 0.0153) -> float:
     if gap_m <= 0:
         raise ValueError(f"gap_m must be positive, got {gap_m}")
     return gap_m
+
+
+# ---------------------------------------------------------------------------
+# Solar gain on the absorbing pane
+# ---------------------------------------------------------------------------
+
+#: Exterior film coefficient at zero wind, W/m2K, and its wind slope.
+#: McAdams' flat-plate correlation, h = 5.7 + 3.8 v. APPROXIMATION: it is a
+#: smooth-surface fit and takes no account of facade turbulence or the height
+#: of the window above grade. NSRDB reports wind speed at 2 m; a curtain wall
+#: forty storeys up sees more.
+H_OUT_STILL_W_M2K = 5.7
+H_OUT_WIND_SLOPE = 3.8
+
+
+def exterior_film_coefficient(wind_m_s: float) -> float:
+    """Outdoor surface conductance, W/m2K. Higher wind sheds heat faster and
+    therefore SUPPRESSES solar warming of the glass."""
+    if wind_m_s < 0:
+        raise ValueError(f"wind_m_s cannot be negative, got {wind_m_s}")
+    return H_OUT_STILL_W_M2K + H_OUT_WIND_SLOPE * wind_m_s
+
+
+def solar_surface_boost(
+    poa_w_m2: float, absorptance: float, h_out_w_m2k: float
+) -> float:
+    """Temperature rise of a sunlit pane above the air-only value, K.
+
+    Steady-state surface balance: absorbed solar leaves by convection to
+    outdoor air, so dT = alpha * I / h_out.
+
+    THIS IS A SIMPLIFICATION, and deliberately a conservative one:
+      - Only the OUTBOARD (absorbing) pane is warmed. Solar transmitted onto
+        the inboard unit is ignored, which keeps the cavity cooler than
+        reality and therefore over-predicts condensation, not under.
+      - Steady state. Glass has little thermal mass, so the lag is minutes,
+        but a fast-moving cloud edge is not resolved at hourly steps.
+      - Long-wave exchange with the sky is NOT included here. At night it
+        acts in the opposite direction and is the subject of a separate
+        change; until then this function is applied only when the sun is up.
+
+    ``absorptance`` is a USER INPUT, not a fitted constant. It depends on the
+    coating and Arnold can read it from WINDOW. alpha = 0 reproduces the
+    air-only model exactly, which is how the validation anchor is preserved.
+    """
+    if absorptance < 0.0 or absorptance > 1.0:
+        raise ValueError(f"absorptance must be 0..1, got {absorptance}")
+    if h_out_w_m2k <= 0.0:
+        raise ValueError(f"h_out must be positive, got {h_out_w_m2k}")
+    if poa_w_m2 <= 0.0:
+        return 0.0
+    return absorptance * poa_w_m2 / h_out_w_m2k
+
+
+# ---------------------------------------------------------------------------
+# Long-wave exchange with the sky
+# ---------------------------------------------------------------------------
+
+STEFAN_BOLTZMANN = 5.670374419e-8      # W/m2K4, exact by SI definition
+GLASS_EMISSIVITY = 0.84                # uncoated soda-lime float, long-wave
+SKY_VIEW_FACTOR_VERTICAL = 0.5         # a wall sees half sky, half ground
+
+
+#: Long-wave opacity by NSRDB cloud type code. 0 = fully transparent (clear
+#: sky, maximum cooling), 1 = fully opaque (sky radiates at air temperature,
+#: no cooling).
+#:
+#: ESTIMATES, informed by measurement but not equal to it. Daylight shortwave
+#: transmittance GHI/ClearskyGHI was computed per cloud type from the 277 Park
+#: TMY and sets the ORDERING for the water and ice categories. It is NOT used
+#: directly, because shortwave and long-wave opacity differ:
+#:   - Fog transmits 82% of shortwave yet is long-wave opaque: it sits at
+#:     ground level and radiates at very nearly air temperature.
+#:   - Cirrus is high and cold and stays semi-transparent in the long-wave
+#:     even where it blocks a good share of sunlight.
+#: Only clear sky (0.0) and overcast water cloud are on firm ground; the
+#: middle of this table is judgement.
+CLOUD_LW_OPACITY = {
+    0: 0.00,   # Clear
+    1: 0.05,   # Probably Clear
+    2: 1.00,   # Fog - at air temperature, radiatively opaque
+    3: 0.90,   # Water
+    4: 0.90,   # Super-Cooled Water
+    5: 0.90,   # Mixed
+    6: 0.85,   # Opaque Ice
+    7: 0.35,   # Cirrus - high, cold, thin in the long-wave
+    8: 0.95,   # Overlapping
+    9: 1.00,   # Overshooting
+}
+
+
+def cloud_opacity(cloud_type_code: float | None) -> float:
+    """Long-wave opacity for an NSRDB cloud type. Unknown codes fall back to
+    clear sky, which maximises cooling and so never hides condensation."""
+    if cloud_type_code is None:
+        return 0.0
+    return CLOUD_LW_OPACITY.get(int(cloud_type_code), 0.0)
+
+
+def sky_temperature_k(t_air_c: float, opacity: float = 0.0) -> float:
+    """Effective radiant sky temperature, K.
+
+    Clear sky follows Swinbank. Cloud raises the effective temperature toward
+    air temperature in proportion to its long-wave opacity, so an overcast sky
+    radiates as if it were the air itself and the surface stops cooling.
+
+    Only 42% of hours at 277 Park are clear or probably clear, so assuming
+    clear sky throughout tripled the wet-hour count. That is why this argument
+    exists.
+    """
+    if not 0.0 <= opacity <= 1.0:
+        raise ValueError(f"opacity must be 0..1, got {opacity}")
+    t_air_k = t_air_c + 273.15
+    t_clear = 0.0552 * t_air_k ** 1.5
+    return t_clear + (t_air_k - t_clear) * opacity
+
+
+def radiative_surface_drop(
+    t_surface_c: float,
+    t_air_c: float,
+    h_out_w_m2k: float,
+    emissivity: float = GLASS_EMISSIVITY,
+    sky_view_factor: float = SKY_VIEW_FACTOR_VERTICAL,
+    opacity: float = 0.0,
+) -> float:
+    """Temperature drop of glass radiating to a cold sky, K. Returns <= 0.
+
+    Glass emits long-wave to a sky that is colder than the air, and that heat
+    is replaced by convection from the air, so the surface settles BELOW air
+    temperature. This is why cars frost on clear nights when the air never
+    reaches freezing.
+
+    The half of the view occupied by ground is treated as being at air
+    temperature, so it exchanges no net radiation. A warm masonry facade
+    opposite would reduce this; a plaza would not.
+
+    Runs day and night. It is largest at night only because solar gain is
+    absent then, not because the mechanism switches off.
+    """
+    if h_out_w_m2k <= 0.0:
+        raise ValueError(f"h_out must be positive, got {h_out_w_m2k}")
+    t_s = t_surface_c + 273.15
+    t_sky = sky_temperature_k(t_air_c, opacity)
+    q = emissivity * STEFAN_BOLTZMANN * sky_view_factor * (t_s ** 4 - t_sky ** 4)
+    return -q / h_out_w_m2k

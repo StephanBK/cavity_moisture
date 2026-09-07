@@ -38,6 +38,10 @@ from dataclasses import dataclass, field
 from engine.cavity import (
     cavity_air_temperature,
     cavity_dry_air_mass,
+    cloud_opacity,
+    exterior_film_coefficient,
+    radiative_surface_drop,
+    solar_surface_boost,
     t_from_f,
 )
 from engine.geometry import CavityGeometry
@@ -436,6 +440,11 @@ def run_year(
     elevation_m: float = 0.0,
     max_film_kg: float = MAX_SURFACE_FILM_KG_PER_M2,
     visible_film_kg_per_m2: float = VISIBLE_FILM_KG_PER_M2,
+    poa_w_m2: list[float] | None = None,
+    absorptance: float = 0.0,
+    wind_m_s: list[float] | None = None,
+    sky_radiation: bool = False,
+    cloud_type: list[float] | None = None,
     substeps: int = 1,
     spinup_passes: int = 1,
     keep_hours: bool = True,
@@ -519,6 +528,21 @@ def run_year(
             # independent (ANLY-002 S2.1), so the same f applies all year.
             t_cold = t_from_f(f_cold, t_out_c=t_o, t_in_c=t_room_c)
             t_warm = t_from_f(f_warm, t_out_c=t_o, t_in_c=t_room_c)
+
+            # Surface energy balance on the outboard pane. Both terms default
+            # OFF, so absorptance 0 with sky_radiation False reproduces the
+            # air-only model exactly - that is how the 676-hour anchor is kept
+            # live while this is developed. Applied to the COLD surface only:
+            # for a single-pane retrofit that pane is the absorber, and its
+            # cavity face is the surface condensation forms on.
+            if poa_w_m2 is not None or sky_radiation:
+                wind = wind_m_s[i] if wind_m_s is not None else 2.0
+                h_out = exterior_film_coefficient(wind)
+                if poa_w_m2 is not None and absorptance > 0.0:
+                    t_cold += solar_surface_boost(poa_w_m2[i], absorptance, h_out)
+                if sky_radiation:
+                    op = cloud_opacity(cloud_type[i]) if cloud_type is not None else 0.0
+                    t_cold += radiative_surface_drop(t_cold, t_o, h_out, opacity=op)
             t_air = cavity_air_temperature(
                 t_cold_c=t_cold,
                 t_warm_c=t_warm,
