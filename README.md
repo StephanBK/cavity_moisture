@@ -25,7 +25,7 @@ exchange rates.
 | 3a | Hourly moisture balance engine | done |
 | 3b | NSRDB TMY weather + /calculate endpoint | done |
 | 3c | Window geometry, per-window totals | done |
-| 4 | ACH bracket sweep + Excel export | pending |
+| 4 | ACH sweep + Excel export | done |
 | 5 | Frontend: Explain / Model / Present | pending |
 | 6 | Railway deploy + validation | pending |
 
@@ -82,6 +82,7 @@ Never commit either. `.env` is gitignored.
 | `/config` | Public front-end config, ACH presets, assumption labels |
 | `/healthz` | Liveness probe + engine self-check |
 | `/calculate` | Run the model. See below. |
+| `/export.xlsx` | Same parameters; returns an Excel workbook |
 
 ### `/calculate` parameters
 
@@ -98,6 +99,22 @@ Never commit either. `.env` is gitignored.
 | `vent_interior` | 1.0 | 1 = vents to room, 0 = vents to outdoors |
 | `width_in`, `height_in`, `offset_in` | — / — / 0.6024 | Enables per-window litres |
 | `sweep` | false | Also run every ACH preset |
+
+### Excel export
+
+`/export.xlsx` takes the identical parameters and returns a three-tab workbook:
+
+| Tab | Contents |
+|---|---|
+| Summary | Inputs, location, results, assumptions |
+| ACH Sweep | One row per air-change rate |
+| Hourly Data | 8,760 rows of model output, filterable |
+
+Every figure on the Summary tab is a **live formula** over the Hourly Data tab,
+not a value copied out of Python. The workbook recalculates, so a reviewer can
+confirm the headline numbers rather than take them on trust. A test recalculates
+the file with LibreOffice and asserts every formula lands on the engine's value
+to 1e-9.
 
 Example:
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from engine import psychro
 from engine.cavity import f_warm_estimate, t_from_f
@@ -22,16 +22,19 @@ from engine.moisture import (
     run_year,
     sweep_ach,
 )
+from engine.report import workbook_bytes
 from engine.weather import WeatherError, get_weather_for_address
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 APP_NAME = "INOVUES Cavity Moisture Model"
+
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
 
 # ---------------------------------------------------------------------------
-# Request parsing helpers
+# Request parsing
 # ---------------------------------------------------------------------------
 
 class BadRequest(ValueError):
@@ -66,7 +69,7 @@ def _ach() -> float:
     """Air change rate: a preset name or any positive number.
 
     ACH is deliberately a free input rather than a fixed bracket, so vent and
-    seal designs that do not match a preset can be tested.
+    seal designs that match no preset can be tested.
     """
     raw = request.args.get("ach", "moderate").strip().lower()
     if raw in ACH_PRESETS:
@@ -105,6 +108,62 @@ def _geometry():
         raise BadRequest(str(exc))
 
 
+def _parse_params() -> dict:
+    """Parse and validate every model input.
+
+    Shared by /calculate and /export.xlsx so the two endpoints cannot drift
+    apart in validation or defaults.
+    """
+    address = request.args.get("address", "").strip()
+    if not address:
+        raise BadRequest("Missing required parameter 'address'")
+
+    f_cold = _float("f_cold", minimum=0.0, maximum=1.0)
+    u_assembly = _float("u_assembly", default=1.7, minimum=0.01)
+    r_cavity = _float("r_cavity", default=0.17, minimum=0.001)
+
+    if request.args.get("f_warm"):
+        f_warm = _float("f_warm", minimum=0.0, maximum=1.0)
+        f_warm_source = "supplied"
+    else:
+        f_warm = f_warm_estimate(f_cold, r_cavity, u_assembly)
+        f_warm_source = "estimated as f_cold + r_cavity x u_assembly"
+
+    if f_warm < f_cold:
+        raise BadRequest(
+            f"f_warm ({f_warm:.3f}) is below f_cold ({f_cold:.3f}). The "
+            "interior-side cavity surface cannot be colder than the "
+            "exterior-side one."
+        )
+
+    return {
+        "address": address,
+        "f_cold": f_cold,
+        "u_assembly": u_assembly,
+        "r_cavity": r_cavity,
+        "f_warm": f_warm,
+        "f_warm_source": f_warm_source,
+        "t_in_f": _float("t_in", default=70.0, minimum=-40.0, maximum=120.0),
+        "rh_in_pct": _float("rh_in", default=35.0, minimum=0.0, maximum=100.0),
+        "ach": _ach(),
+        "vent_interior": _float("vent_interior", default=1.0, minimum=0.0, maximum=1.0),
+        "geometry": _geometry(),
+        "sweep": _bool("sweep", False),
+    }
+
+
+def _run_kwargs(params: dict, weather) -> dict:
+    return dict(
+        f_cold=params["f_cold"],
+        f_warm=params["f_warm"],
+        t_room_c=psychro.f_to_c(params["t_in_f"]),
+        rh_room=params["rh_in_pct"] / 100.0,
+        vent_interior_fraction=params["vent_interior"],
+        geometry=params["geometry"],
+        elevation_m=weather.elevation_m,
+    )
+
+
 def _summary_dict(summary) -> dict:
     """Serialise a RunSummary, omitting the 8,760 hourly records."""
     out = {
@@ -141,6 +200,14 @@ def _summary_dict(summary) -> dict:
             ),
         }
     return out
+
+
+def _error_response(exc):
+    if isinstance(exc, BadRequest):
+        return jsonify({"error": "bad_request", "message": str(exc)}), 400
+    if isinstance(exc, WeatherError):
+        return jsonify({"error": "weather_unavailable", "message": str(exc)}), 502
+    return jsonify({"error": "invalid_input", "message": str(exc)}), 400
 
 
 # ---------------------------------------------------------------------------
@@ -234,63 +301,27 @@ def calculate():
     sweep          default false. If true, also run every ACH preset.
     """
     try:
-        address = request.args.get("address", "").strip()
-        if not address:
-            raise BadRequest("Missing required parameter 'address'")
-
-        f_cold = _float("f_cold", minimum=0.0, maximum=1.0)
-        u_assembly = _float("u_assembly", default=1.7, minimum=0.01)
-        r_cavity = _float("r_cavity", default=0.17, minimum=0.001)
-        f_warm_raw = request.args.get("f_warm")
-        if f_warm_raw:
-            f_warm = _float("f_warm", minimum=0.0, maximum=1.0)
-            f_warm_source = "supplied"
-        else:
-            f_warm = f_warm_estimate(f_cold, r_cavity, u_assembly)
-            f_warm_source = "estimated as f_cold + r_cavity x u_assembly"
-
-        if f_warm < f_cold:
-            raise BadRequest(
-                f"f_warm ({f_warm:.3f}) is below f_cold ({f_cold:.3f}). The "
-                "interior-side cavity surface cannot be colder than the "
-                "exterior-side one."
-            )
-
-        t_in_f = _float("t_in", default=70.0, minimum=-40.0, maximum=120.0)
-        rh_in_pct = _float("rh_in", default=35.0, minimum=0.0, maximum=100.0)
-        ach = _ach()
-        vent_interior = _float("vent_interior", default=1.0, minimum=0.0, maximum=1.0)
-        geometry = _geometry()
-        want_sweep = _bool("sweep", False)
-
-        location, weather, cached = get_weather_for_address(address)
-
-        common = dict(
-            f_cold=f_cold,
-            f_warm=f_warm,
-            t_room_c=psychro.f_to_c(t_in_f),
-            rh_room=rh_in_pct / 100.0,
-            vent_interior_fraction=vent_interior,
-            geometry=geometry,
-            elevation_m=weather.elevation_m,
-        )
+        params = _parse_params()
+        location, weather, cached = get_weather_for_address(params["address"])
+        common = _run_kwargs(params, weather)
 
         summary = run_year(
-            weather.t_out_c, weather.rh_out, ach=ach, keep_hours=False, **common
+            weather.t_out_c, weather.rh_out, ach=params["ach"],
+            keep_hours=False, **common
         )
 
         payload = {
             "inputs": {
-                "address": address,
-                "f_cold": f_cold,
-                "f_warm": round(f_warm, 4),
-                "f_warm_source": f_warm_source,
-                "u_assembly": u_assembly,
-                "r_cavity": r_cavity,
-                "t_in_f": t_in_f,
-                "rh_in_pct": rh_in_pct,
-                "ach": ach,
-                "vent_interior_fraction": vent_interior,
+                "address": params["address"],
+                "f_cold": params["f_cold"],
+                "f_warm": round(params["f_warm"], 4),
+                "f_warm_source": params["f_warm_source"],
+                "u_assembly": params["u_assembly"],
+                "r_cavity": params["r_cavity"],
+                "t_in_f": params["t_in_f"],
+                "rh_in_pct": params["rh_in_pct"],
+                "ach": params["ach"],
+                "vent_interior_fraction": params["vent_interior"],
             },
             "location": {
                 "matched_address": location.matched_address,
@@ -300,32 +331,28 @@ def calculate():
             },
             "weather": weather.describe(),
             "surfaces_at_nfrc_winter_f": {
-                "t_cold": round(psychro.c_to_f(t_from_f(f_cold)), 2),
-                "t_warm": round(psychro.c_to_f(t_from_f(f_warm)), 2),
+                "t_cold": round(psychro.c_to_f(t_from_f(params["f_cold"])), 2),
+                "t_warm": round(psychro.c_to_f(t_from_f(params["f_warm"])), 2),
             },
             "summary": _summary_dict(summary),
             "assumptions": {
                 "ach_presets_are_estimates": ACH_PRESETS_ARE_ESTIMATES,
                 "max_surface_film_kg_per_m2": MAX_SURFACE_FILM_KG_PER_M2,
-                "f_warm_source": f_warm_source,
+                "f_warm_source": params["f_warm_source"],
             },
         }
 
-        if geometry is not None:
-            payload["geometry"] = geometry.describe()
+        if params["geometry"] is not None:
+            payload["geometry"] = params["geometry"].describe()
 
-        if want_sweep:
+        if params["sweep"]:
             results = sweep_ach(
-                weather.t_out_c,
-                weather.rh_out,
-                f_cold=f_cold,
-                f_warm=f_warm,
+                weather.t_out_c, weather.rh_out,
+                f_cold=params["f_cold"], f_warm=params["f_warm"],
                 ach_values=list(ACH_PRESETS.values()),
-                t_room_c=common["t_room_c"],
-                rh_room=common["rh_room"],
-                vent_interior_fraction=vent_interior,
-                geometry=geometry,
-                elevation_m=weather.elevation_m,
+                t_room_c=common["t_room_c"], rh_room=common["rh_room"],
+                vent_interior_fraction=params["vent_interior"],
+                geometry=params["geometry"], elevation_m=weather.elevation_m,
             )
             payload["sweep"] = [
                 {"preset": name, **_summary_dict(r)}
@@ -334,12 +361,71 @@ def calculate():
 
         return jsonify(payload)
 
-    except BadRequest as exc:
-        return jsonify({"error": "bad_request", "message": str(exc)}), 400
-    except WeatherError as exc:
-        return jsonify({"error": "weather_unavailable", "message": str(exc)}), 502
-    except ValueError as exc:
-        return jsonify({"error": "invalid_input", "message": str(exc)}), 400
+    except (BadRequest, WeatherError, ValueError) as exc:
+        return _error_response(exc)
+
+
+@app.route("/export.xlsx")
+def export_xlsx():
+    """Excel workbook: Summary, ACH Sweep, and 8,760 hours of raw data.
+
+    Takes the same query parameters as /calculate. The Summary sheet computes
+    its figures with live formulas over the raw tab rather than copying values
+    out of Python, so the workbook recalculates and can be audited.
+    """
+    try:
+        params = _parse_params()
+        location, weather, _ = get_weather_for_address(params["address"])
+        common = _run_kwargs(params, weather)
+
+        summary = run_year(
+            weather.t_out_c, weather.rh_out, ach=params["ach"],
+            keep_hours=True, **common
+        )
+        sweep = sweep_ach(
+            weather.t_out_c, weather.rh_out,
+            f_cold=params["f_cold"], f_warm=params["f_warm"],
+            ach_values=list(ACH_PRESETS.values()),
+            t_room_c=common["t_room_c"], rh_room=common["rh_room"],
+            vent_interior_fraction=params["vent_interior"],
+            geometry=params["geometry"], elevation_m=weather.elevation_m,
+        )
+
+        geometry = params["geometry"]
+        vent = params["vent_interior"]
+        meta = {
+            "matched_address": location.matched_address,
+            "weather_source": weather.source,
+            "station_id": weather.station_id,
+            "elevation_m": weather.elevation_m,
+            "f_cold": params["f_cold"],
+            "f_warm": round(params["f_warm"], 4),
+            "f_warm_source": params["f_warm_source"],
+            "offset_in": round(geometry.offset_in, 4) if geometry else None,
+            "width_in": round(geometry.width_in, 2) if geometry else None,
+            "height_in": round(geometry.height_in, 2) if geometry else None,
+            "glazing_area_m2": geometry.glazing_area_m2 if geometry else None,
+            "t_in_f": params["t_in_f"],
+            "rh_in_pct": params["rh_in_pct"],
+            "ach": params["ach"],
+            "vent_label": f"{vent:.2f} ({'interior' if vent >= 0.5 else 'exterior'})",
+        }
+
+        data = workbook_bytes(summary, meta, sweep, list(ACH_PRESETS))
+        stem = "".join(
+            ch if ch.isalnum() else "_" for ch in params["address"]
+        )[:40].strip("_") or "cavity"
+        return Response(
+            data,
+            mimetype=XLSX_MIME,
+            headers={
+                "Content-Disposition":
+                    f'attachment; filename="{stem}_cavity_moisture.xlsx"'
+            },
+        )
+
+    except (BadRequest, WeatherError, ValueError) as exc:
+        return _error_response(exc)
 
 
 if __name__ == "__main__":
