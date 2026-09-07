@@ -38,7 +38,7 @@ from pathlib import Path
 import requests
 
 MAPBOX_GEOCODE_URL = "https://api.mapbox.com/search/geocode/v6/forward"
-NSRDB_TMY_URL = "https://developer.nrel.gov/api/nsrdb/v2/solar/psm3-tmy-download.csv"
+NSRDB_TMY_URL = "https://developer.nlr.gov/api/nsrdb/v2/solar/psm3-tmy-download.csv"
 
 #: NSRDB attributes we request. Temperature and RH are what the moisture model
 #: needs; surface pressure lets us use measured rather than standard-atmosphere
@@ -55,6 +55,71 @@ CACHE_PRECISION = 2
 
 class WeatherError(RuntimeError):
     """Raised when a location or weather lookup fails in a way the user can act on."""
+
+
+# ---------------------------------------------------------------------------
+# Secret hygiene and upstream error extraction
+# ---------------------------------------------------------------------------
+
+#: Query parameters whose VALUES must never reach a log, a traceback, or the
+#: browser. requests embeds the full URL in HTTPError messages, so an unhandled
+#: 4xx would otherwise print the NREL key into Railway's retained logs.
+SECRET_PARAMS = ("api_key", "access_token")
+
+
+def scrub_secrets(text: str) -> str:
+    """Replace the value of any secret query parameter with ``REDACTED``."""
+    if not text:
+        return text
+    for name in SECRET_PARAMS:
+        out = []
+        for i, chunk in enumerate(text.split(f"{name}=")):
+            if i == 0:
+                out.append(chunk)
+                continue
+            # The value runs to the next delimiter.
+            end = len(chunk)
+            for d in ("&", " ", '"', "'", ")", ","):
+                j = chunk.find(d)
+                if j != -1:
+                    end = min(end, j)
+            out.append("REDACTED" + chunk[end:])
+        text = f"{name}=".join(out) if len(out) > 1 else text
+    return text
+
+
+def describe_upstream_error(status: int, body: str) -> str:
+    """Turn an NSRDB error response into one actionable, secret-free sentence.
+
+    The service answers errors in whichever format the request asked for, so a
+    ``.csv`` request yields a CSV error table, not JSON. Both are handled; an
+    unrecognised body falls back to a truncated, scrubbed excerpt.
+    """
+    body = (body or "").strip()
+    messages: list[str] = []
+
+    if body.startswith("{"):
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            payload = {}
+        errors = payload.get("errors")
+        if isinstance(errors, list):
+            messages = [str(e) for e in errors if e]
+        elif isinstance(payload.get("error"), dict):
+            msg = payload["error"].get("message")
+            if msg:
+                messages = [str(msg)]
+    elif body:
+        rows = list(csv.reader(io.StringIO(body)))
+        if len(rows) >= 2 and rows[0] and "error" in rows[0][0].strip().lower():
+            messages = [", ".join(c for c in row if c).strip() for row in rows[1:] if row]
+
+    if not messages and body:
+        messages = [body[:200]]
+
+    detail = "; ".join(scrub_secrets(m) for m in messages) or "no detail supplied"
+    return f"NSRDB returned HTTP {status}: {detail}"
 
 
 # ---------------------------------------------------------------------------
@@ -126,16 +191,33 @@ def geocode(address: str, token: str | None = None, timeout: int = 30) -> Locati
     if not address or not address.strip():
         raise WeatherError("No address supplied")
 
-    resp = requests.get(
-        MAPBOX_GEOCODE_URL,
-        params={"q": address.strip(), "limit": 1, "access_token": token},
-        timeout=timeout,
-    )
+    try:
+        resp = requests.get(
+            MAPBOX_GEOCODE_URL,
+            params={"q": address.strip(), "limit": 1, "access_token": token},
+            timeout=timeout,
+        )
+    except requests.Timeout:
+        raise WeatherError(
+            f"Mapbox did not respond within {timeout}s. Try again shortly."
+        ) from None
+    except requests.RequestException as exc:
+        raise WeatherError(
+            f"Could not reach Mapbox: {scrub_secrets(str(exc))}"
+        ) from None
+
     if resp.status_code == 401:
         raise WeatherError("Mapbox rejected the token (401). Check MAPBOX_TOKEN.")
-    resp.raise_for_status()
+    if not resp.ok:
+        raise WeatherError(
+            f"Mapbox geocoding failed with HTTP {resp.status_code}: "
+            f"{scrub_secrets(resp.text[:200])}"
+        )
 
-    features = resp.json().get("features") or []
+    try:
+        features = resp.json().get("features") or []
+    except ValueError:
+        raise WeatherError("Mapbox returned a response that was not JSON.") from None
     if not features:
         raise WeatherError(f"No location found for {address!r}")
 
@@ -303,25 +385,42 @@ def fetch_tmy(
     if cached is not None:
         return cached, True
 
-    resp = requests.get(
-        NSRDB_TMY_URL,
-        params={
-            "wkt": f"POINT({lon} {lat})",
-            "names": "tmy",
-            "interval": "60",
-            "utc": "false",
-            "leap_day": "false",
-            "attributes": NSRDB_ATTRIBUTES,
-            "api_key": api_key,
-            "email": email,
-        },
-        timeout=timeout,
-    )
+    try:
+        resp = requests.get(
+            NSRDB_TMY_URL,
+            params={
+                "wkt": f"POINT({lon} {lat})",
+                "names": "tmy",
+                "interval": "60",
+                "utc": "false",
+                "leap_day": "false",
+                "attributes": NSRDB_ATTRIBUTES,
+                "api_key": api_key,
+                "email": email,
+            },
+            timeout=timeout,
+        )
+    except requests.Timeout as exc:
+        raise WeatherError(
+            f"NSRDB did not respond within {timeout}s. Try again shortly."
+        ) from None
+    except requests.RequestException as exc:
+        # Never chain: the original carries the full URL, api_key included.
+        raise WeatherError(
+            f"Could not reach NSRDB at {NSRDB_TMY_URL}: {scrub_secrets(str(exc))}"
+        ) from None
+
     if resp.status_code == 403:
         raise WeatherError("NSRDB rejected the API key (403). Check NREL_API_KEY.")
     if resp.status_code == 429:
         raise WeatherError("NSRDB rate limit reached (429). Try again shortly.")
-    resp.raise_for_status()
+    if resp.status_code == 404:
+        raise WeatherError(
+            f"NSRDB endpoint not found (404): {NSRDB_TMY_URL}. The dataset may "
+            "have been superseded; check the current NSRDB download API."
+        )
+    if not resp.ok:
+        raise WeatherError(describe_upstream_error(resp.status_code, resp.text))
 
     year = parse_nsrdb_csv(resp.text)
     _cache_write(cache_path, year)
