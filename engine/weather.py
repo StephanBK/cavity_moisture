@@ -43,7 +43,10 @@ NSRDB_TMY_URL = "https://developer.nlr.gov/api/nsrdb/v2/solar/nsrdb-GOES-tmy-v4-
 #: NSRDB attributes we request. Temperature and RH are what the moisture model
 #: needs; surface pressure lets us use measured rather than standard-atmosphere
 #: pressure in the psychrometrics.
-NSRDB_ATTRIBUTES = "air_temperature,relative_humidity,surface_pressure"
+NSRDB_ATTRIBUTES = (
+    "air_temperature,relative_humidity,surface_pressure,"
+    "ghi,dni,dhi,wind_speed,cloud_type"
+)
 
 DEFAULT_TIMEOUT = 120
 CACHE_DIR = Path(os.environ.get("WEATHER_CACHE_DIR", "cache"))
@@ -145,8 +148,16 @@ class WeatherYear:
     grid_lon: float | None = None
     time_zone: float | None = None
     station_id: str | None = None
-    source: str = "NSRDB PSM3 TMY"
+    source: str = "NSRDB GOES TMY v4.0.0"
     surface_pressure_pa: list[float] = field(default_factory=list, repr=False)
+    #: Irradiance and sky state, for the surface energy balance. Empty when
+    #: the fetch did not request them, in which case the caller falls back to
+    #: the air-only model rather than guessing.
+    ghi_w_m2: list[float] = field(default_factory=list, repr=False)
+    dni_w_m2: list[float] = field(default_factory=list, repr=False)
+    dhi_w_m2: list[float] = field(default_factory=list, repr=False)
+    wind_m_s: list[float] = field(default_factory=list, repr=False)
+    cloud_type: list[float] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
         if len(self.t_out_c) != len(self.rh_out):
@@ -161,6 +172,18 @@ class WeatherYear:
     def hours(self) -> int:
         return len(self.t_out_c)
 
+    @property
+    def has_solar(self) -> bool:
+        """True when irradiance is present for every hour. The surface energy
+        balance is only offered when this holds; a partial series would
+        silently apply sun to some hours and not others."""
+        n = self.hours
+        return (
+            len(self.ghi_w_m2) == n
+            and len(self.dni_w_m2) == n
+            and len(self.dhi_w_m2) == n
+        )
+
     def describe(self) -> dict:
         return {
             "source": self.source,
@@ -170,6 +193,7 @@ class WeatherYear:
             "grid_lon": self.grid_lon,
             "time_zone": self.time_zone,
             "station_id": self.station_id,
+            "has_solar": self.has_solar,
             "t_out_c_min": round(min(self.t_out_c), 2),
             "t_out_c_max": round(max(self.t_out_c), 2),
             "t_out_c_mean": round(sum(self.t_out_c) / self.hours, 2),
@@ -288,9 +312,26 @@ def parse_nsrdb_csv(text: str) -> WeatherYear:
     except WeatherError:
         i_p = None
 
+    def optional_column(*names: str) -> int | None:
+        for name in names:
+            if name in header:
+                return header.index(name)
+        return None
+
+    i_ghi = optional_column("GHI")
+    i_dni = optional_column("DNI")
+    i_dhi = optional_column("DHI")
+    i_wind = optional_column("Wind Speed")
+    i_cloud = optional_column("Cloud Type")
+
     t_out_c: list[float] = []
     rh_out: list[float] = []
     pressures: list[float] = []
+    ghi: list[float] = []
+    dni: list[float] = []
+    dhi: list[float] = []
+    wind: list[float] = []
+    cloud: list[float] = []
 
     for row in rows[3:]:
         if not row or not row[i_t].strip():
@@ -301,6 +342,10 @@ def parse_nsrdb_csv(text: str) -> WeatherYear:
         if i_p is not None:
             # NSRDB reports pressure in millibar (hPa); 1 mbar = 100 Pa.
             pressures.append(float(row[i_p]) * 100.0)
+        for idx, sink in ((i_ghi, ghi), (i_dni, dni), (i_dhi, dhi),
+                          (i_wind, wind), (i_cloud, cloud)):
+            if idx is not None:
+                sink.append(float(row[idx]))
 
     if len(t_out_c) not in (8760, 8784):
         raise WeatherError(
@@ -323,6 +368,11 @@ def parse_nsrdb_csv(text: str) -> WeatherYear:
         time_zone=meta_float("Time Zone"),
         station_id=meta.get("Location ID"),
         surface_pressure_pa=pressures,
+        ghi_w_m2=ghi,
+        dni_w_m2=dni,
+        dhi_w_m2=dhi,
+        wind_m_s=wind,
+        cloud_type=cloud,
     )
 
 

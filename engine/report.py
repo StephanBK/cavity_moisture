@@ -409,7 +409,45 @@ def _write_summary(wb, summary, meta, last_row: int, has_sweep: bool) -> None:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def build_workbook(summary, meta: dict, sweep_results=None, preset_names=None) -> Workbook:
+def _write_orientations(wb: Workbook, rows) -> None:
+    """One row per facade at the chosen vent design.
+
+    Values are Python-computed, unlike the Summary sheet: each row comes from
+    a separate full-year run, so there is no single hourly tab to formulate
+    against. The sheet says so rather than implying an audit trail it does
+    not have.
+    """
+    ws = wb.create_sheet("Orientation")
+    headers = ["Facade", "Azimuth deg", "Visible hours", "Wet hours",
+               "Condensed g/m2", "Litres/window/yr"]
+    for i, head in enumerate(headers, start=1):
+        c = ws.cell(row=1, column=i, value=head)
+        c.font = HEADING
+        c.fill = HEADER_FILL
+    for r, row in enumerate(rows, start=2):
+        per = row.get("per_window") or {}
+        values = [
+            row.get("orientation"), row.get("azimuth_deg"),
+            row.get("hours_water_visible"), row.get("hours_water_present"),
+            row.get("condensed_g_per_m2"),
+            per.get("condensed_litres_per_year"),
+        ]
+        for c, value in enumerate(values, start=1):
+            ws.cell(row=r, column=c, value=value)
+    note = ws.cell(
+        row=len(rows) + 3, column=1,
+        value=("Computed values, not formulas: each facade is a separate "
+               "full-year run. Solar absorptance is an ESTIMATE; it is a "
+               "common factor across facades, so the comparison is more "
+               "reliable than any single figure here."),
+    )
+    note.font = NOTE_FONT
+    for i, head in enumerate(headers, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = max(14, len(head) + 2)
+
+
+def build_workbook(summary, meta: dict, sweep_results=None, preset_names=None,
+                   orientation_rows=None) -> Workbook:
     """Assemble the workbook. ``summary`` must have been run with keep_hours=True."""
     if not summary.hours:
         raise ValueError(
@@ -422,14 +460,18 @@ def build_workbook(summary, meta: dict, sweep_results=None, preset_names=None) -
     last_row = _write_hourly(wb, summary)
     if sweep_results:
         _write_sweep(wb, sweep_results, preset_names or [], summary.geometry)
+    if orientation_rows:
+        _write_orientations(wb, orientation_rows)
     _write_summary(wb, summary, meta, last_row, bool(sweep_results))
 
     wb.active = 0
     return wb
 
 
-def workbook_bytes(summary, meta: dict, sweep_results=None, preset_names=None) -> bytes:
+def workbook_bytes(summary, meta: dict, sweep_results=None, preset_names=None,
+                   orientation_rows=None) -> bytes:
     """Workbook as bytes, for streaming from a Flask response."""
     buffer = BytesIO()
-    build_workbook(summary, meta, sweep_results, preset_names).save(buffer)
+    build_workbook(summary, meta, sweep_results, preset_names,
+                   orientation_rows).save(buffer)
     return buffer.getvalue()

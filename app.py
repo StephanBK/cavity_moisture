@@ -23,6 +23,7 @@ from engine.moisture import (
     sweep_ach,
 )
 from engine.report import workbook_bytes
+from engine.solar import ORIENTATIONS, poa_series
 from engine.weather import WeatherError, get_weather_for_address
 
 APP_VERSION = "0.4.0"
@@ -132,6 +133,18 @@ def _parse_params() -> dict:
     # ESTIMATE - see VISIBLE_FILM_KG_PER_M2. Labelled wherever it surfaces.
     visible_um = _float("visible_um", default=5.0, minimum=0.0, maximum=1000.0)
 
+    # Surface energy balance. Both default OFF so existing URLs and the
+    # validation anchor keep their meaning; the UI opts in explicitly. Same
+    # precedent as u_ip vs u_assembly: never silently reinterpret a request.
+    absorptance = _float("absorptance", default=0.0, minimum=0.0, maximum=1.0)
+    sky_radiation = _bool("sky_radiation", False)
+    orientation = (request.args.get("orientation") or "south").strip().lower()
+    if orientation not in ORIENTATIONS:
+        raise BadRequest(
+            f"orientation must be one of {', '.join(ORIENTATIONS)}, "
+            f"got {orientation!r}"
+        )
+
     if request.args.get("r_ip"):
         r_cavity = psychro.r_ip_to_si(_float("r_ip", minimum=0.001, maximum=100.0))
     else:
@@ -157,6 +170,9 @@ def _parse_params() -> dict:
         "u_assembly": u_assembly,
         "r_cavity": r_cavity,
         "visible_um": visible_um,
+        "absorptance": absorptance,
+        "sky_radiation": sky_radiation,
+        "orientation": orientation,
         "f_warm": f_warm,
         "f_warm_source": f_warm_source,
         "t_in_f": _float("t_in", default=70.0, minimum=-40.0, maximum=120.0),
@@ -165,6 +181,7 @@ def _parse_params() -> dict:
         "vent_interior": _float("vent_interior", default=1.0, minimum=0.0, maximum=1.0),
         "geometry": _geometry(),
         "sweep": _bool("sweep", False),
+        "orientations": _bool("orientations", False),
     }
 
 
@@ -179,7 +196,32 @@ def _run_kwargs(params: dict, weather) -> dict:
         elevation_m=weather.elevation_m,
         # microns -> kg/m2. 1 g/m2 is a 1 um film.
         visible_film_kg_per_m2=params["visible_um"] / 1000.0,
+        **_surface_balance_kwargs(params, weather, params["orientation"]),
     )
+
+
+def _surface_balance_kwargs(params: dict, weather, orientation: str) -> dict:
+    """Solar and sky arguments for run_year, or nothing at all.
+
+    Returns an empty dict when the weather year carries no irradiance, so an
+    older cached TMY silently falls back to the air-only model instead of
+    half-applying sun.
+    """
+    if not weather.has_solar:
+        return {}
+    out: dict = {
+        "wind_m_s": weather.wind_m_s or None,
+        "sky_radiation": params["sky_radiation"],
+        "cloud_type": weather.cloud_type or None,
+    }
+    if params["absorptance"] > 0.0:
+        out["poa_w_m2"] = poa_series(
+            weather.ghi_w_m2, weather.dni_w_m2, weather.dhi_w_m2,
+            weather.grid_lat, weather.grid_lon, weather.time_zone or 0.0,
+            ORIENTATIONS[orientation],
+        )
+        out["absorptance"] = params["absorptance"]
+    return out
 
 
 def _summary_dict(summary) -> dict:
@@ -350,6 +392,10 @@ def calculate():
                 "u_assembly_ip": round(psychro.u_si_to_ip(params["u_assembly"]), 4),
                 "r_cavity": params["r_cavity"],
                 "r_cavity_ip": round(psychro.r_si_to_ip(params["r_cavity"]), 4),
+                "absorptance": params["absorptance"],
+                "sky_radiation": params["sky_radiation"],
+                "orientation": params["orientation"],
+                "visible_um": params["visible_um"],
                 "t_in_f": params["t_in_f"],
                 "rh_in_pct": params["rh_in_pct"],
                 "ach": params["ach"],
@@ -386,10 +432,31 @@ def calculate():
                 vent_interior_fraction=params["vent_interior"],
                 geometry=params["geometry"], elevation_m=weather.elevation_m,
                 visible_film_kg_per_m2=params["visible_um"] / 1000.0,
+                **_surface_balance_kwargs(params, weather, params["orientation"]),
             )
             payload["sweep"] = [
                 {"preset": name, **_summary_dict(r)}
                 for name, r in zip(ACH_PRESETS, results)
+            ]
+
+        # Four facades at the chosen vent design. Only meaningful when the sun
+        # is actually switched on - with absorptance 0 every orientation
+        # returns the same numbers, which would imply orientation does not
+        # matter rather than that it was not modelled.
+        if params["orientations"] and weather.has_solar and params["absorptance"] > 0:
+            payload["orientations"] = [
+                {
+                    "orientation": name,
+                    "azimuth_deg": ORIENTATIONS[name],
+                    **_summary_dict(
+                        run_year(
+                            weather.t_out_c, weather.rh_out, ach=params["ach"],
+                            keep_hours=False,
+                            **{**common, **_surface_balance_kwargs(params, weather, name)},
+                        )
+                    ),
+                }
+                for name in ORIENTATIONS
             ]
 
         return jsonify(payload)
@@ -444,7 +511,19 @@ def export_xlsx():
             "vent_label": f"{vent:.2f} ({'interior' if vent >= 0.5 else 'exterior'})",
         }
 
-        data = workbook_bytes(summary, meta, sweep, list(ACH_PRESETS))
+        orientation_rows = None
+        if params["orientations"] and weather.has_solar and params["absorptance"] > 0:
+            orientation_rows = [
+                {"orientation": name, "azimuth_deg": ORIENTATIONS[name],
+                 **_summary_dict(run_year(
+                     weather.t_out_c, weather.rh_out, ach=params["ach"],
+                     keep_hours=False,
+                     **{**common, **_surface_balance_kwargs(params, weather, name)},
+                 ))}
+                for name in ORIENTATIONS
+            ]
+        data = workbook_bytes(summary, meta, sweep, list(ACH_PRESETS),
+                              orientation_rows)
         stem = "".join(
             ch if ch.isalnum() else "_" for ch in params["address"]
         )[:40].strip("_") or "cavity"

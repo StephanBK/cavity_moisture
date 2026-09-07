@@ -250,6 +250,7 @@ function App(){
   const [inp,setInp]=useState({
     address:'277 Park Avenue, New York, NY',
     f_cold:0.013, u_ip:0.12, f_warm:'',
+    orientation:'south', absorptance:0.10, sky_radiation:true,
     width_in:60, height_in:96, offset_in:0.6024,
     t_in:70, rh_in:35, ach:5, vent_interior:1
   });
@@ -277,7 +278,9 @@ function App(){
     const p=new URLSearchParams({
       address:inp.address, f_cold:inp.f_cold, u_ip:inp.u_ip,
       t_in:inp.t_in, rh_in:inp.rh_in, ach:inp.ach, vent_interior:inp.vent_interior,
-      width_in:inp.width_in, height_in:inp.height_in, offset_in:inp.offset_in, sweep:'true'
+      width_in:inp.width_in, height_in:inp.height_in, offset_in:inp.offset_in, sweep:'true',
+      orientation:inp.orientation, absorptance:inp.absorptance,
+      sky_radiation:inp.sky_radiation?'true':'false', orientations:'true'
     });
     if(inp.f_warm!=='') p.set('f_warm',inp.f_warm);
     return p.toString();
@@ -344,6 +347,21 @@ function App(){
       )
     ),
 
+    h('fieldset',null,h('legend',null,'Facade and sun'),
+      h('label',{htmlFor:'ori'},'Orientation'),
+      h('select',{id:'ori',value:inp.orientation,
+        onChange:e=>set('orientation',e.target.value)},
+        ['north','east','south','west'].map(o=>h('option',{key:o,value:o},o))),
+      h('label',{htmlFor:'abs'},'Glass solar absorptance'),
+      h('input',{id:'abs',type:'number',step:0.01,min:0,max:1,value:inp.absorptance,
+        onChange:e=>set('absorptance',e.target.value)}),
+      h('p',{className:'hint'},'ESTIMATE. ~0.10 clear single pane, ~0.35 tinted. 0 disables sun.'),
+      h('label',{className:'check'},
+        h('input',{type:'checkbox',checked:inp.sky_radiation,
+          onChange:e=>set('sky_radiation',e.target.checked)}),
+        ' Night-sky radiative cooling'),
+      h('p',{className:'hint'},'Clear skies cool glass below air temperature. Cloud-corrected from NSRDB.')),
+
     h('fieldset',null,h('legend',null,'Vent design'),
       h('div',{className:'achread'},
         h('span',{className:'achval num'},f1(inp.ach,2)),
@@ -409,6 +427,26 @@ function ModelView({inp,res}){
       h('div',{className:'stat'},h('dt',null,'Cavity dew point, mean'),h('dd',{className:'num'},f1(s.cavity_dew_point_f.mean)+'°F')),
       h('div',{className:'stat'},h('dt',null,'Room dew point'),h('dd',{className:'num'},f1(s.room_dew_point_f)+'°F')),
       h('div',{className:'stat'},h('dt',null,'Drained out'),h('dd',{className:'num'},f1(s.drained_g_per_m2)+' g/m²'))),
+
+    (res.orientations&&res.orientations.length?h('div',null,
+      h('h2',null,'How the facade orientation changes it'),
+      h('table',null,
+        h('thead',null,h('tr',null,
+          h('th',null,'Facade'),h('th',null,'Visible hours'),h('th',null,'Wet hours'),
+          h('th',null,'Condensed g/m²'),h('th',null,'Litres/window'))),
+        h('tbody',null,res.orientations.map(r=>
+          h('tr',{key:r.orientation,'data-current':r.orientation===res.inputs.orientation},
+            h('td',null,r.orientation),
+            h('td',{className:'num'},r.hours_water_visible.toLocaleString()),
+            h('td',{className:'num'},r.hours_water_present.toLocaleString()),
+            h('td',{className:'num'},f1(r.condensed_g_per_m2)),
+            h('td',{className:'num'},r.per_window?f1(r.per_window.condensed_litres_per_year,2):'—'))))),
+      h('div',{className:'note'},
+        'Sun warms the outboard pane and dries the cavity; a south facade in a New York '+
+        'January receives more irradiance than in July, because the low sun strikes vertical '+
+        'glass near normal. Absorptance is an ESTIMATE, but it is a common factor across all '+
+        'four facades, so the comparison holds even where the absolute figures move.')
+    ):null,
 
     h('h2',null,'How the vent design changes it'),
     h('table',null,
