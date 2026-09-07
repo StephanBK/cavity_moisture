@@ -40,6 +40,7 @@ from engine.cavity import (
     cavity_dry_air_mass,
     t_from_f,
 )
+from engine.geometry import CavityGeometry
 from engine.psychro import (
     atmospheric_pressure_pa,
     dew_point_from_w,
@@ -140,6 +141,11 @@ class RunSummary:
     max_cavity_dew_point_c: float
     mean_room_dew_point_c: float
     hours_condensing_room_assumption: int
+    geometry: CavityGeometry | None = None
+    glazing_area_m2: float | None = None
+    total_condensed_litres_per_window: float | None = None
+    total_drained_litres_per_window: float | None = None
+    peak_surface_water_litres_per_window: float | None = None
     hours: list[HourResult] = field(default_factory=list, repr=False)
 
 
@@ -404,6 +410,7 @@ def run_year(
     t_room_c: float = 21.0,
     rh_room: float = 0.35,
     vent_interior_fraction: float = 1.0,
+    geometry: CavityGeometry | None = None,
     gap_m: float = 0.0153,
     elevation_m: float = 0.0,
     max_film_kg: float = MAX_SURFACE_FILM_KG_PER_M2,
@@ -454,6 +461,12 @@ def run_year(
         raise ValueError(f"substeps must be at least 1, got {substeps}")
     if ach < 0:
         raise ValueError(f"ach cannot be negative, got {ach}")
+
+    # Geometry, when supplied, is the authority on cavity depth. Window width
+    # and height do NOT change the per-m2 answer at fixed ACH (they cancel);
+    # they set the per-window totals. See engine/geometry.py.
+    if geometry is not None:
+        gap_m = geometry.offset_m
 
     p_atm = atmospheric_pressure_pa(elevation_m)
     w_room = w_from_t_rh(t_room_c, rh_room, p_atm_pa=p_atm)
@@ -574,6 +587,17 @@ def run_year(
         max_cavity_dew_point_c=max(dew_points),
         mean_room_dew_point_c=dew_point_from_w(w_room, p_atm_pa=p_atm),
         hours_condensing_room_assumption=hours_condensing_room,
+        geometry=geometry,
+        glazing_area_m2=geometry.glazing_area_m2 if geometry else None,
+        total_condensed_litres_per_window=(
+            geometry.litres(total_condensed) if geometry else None
+        ),
+        total_drained_litres_per_window=(
+            geometry.litres(total_drained) if geometry else None
+        ),
+        peak_surface_water_litres_per_window=(
+            geometry.litres(peak_water) if geometry else None
+        ),
         hours=hours,
     )
 
