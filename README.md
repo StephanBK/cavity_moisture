@@ -26,7 +26,7 @@ exchange rates.
 | 3b | NSRDB TMY weather + /calculate endpoint | done |
 | 3c | Window geometry, per-window totals | done |
 | 4 | ACH sweep + Excel export | done |
-| 5 | Frontend: Explain / Model / Present | pending |
+| 5 | Frontend: Explain / Model / Present | done |
 | 6 | Railway deploy + validation | pending |
 
 ## Unit convention

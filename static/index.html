@@ -1,22 +1,549 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>INOVUES · Cavity Moisture Model</title>
-  <style>
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0;
-           display: grid; place-items: center; min-height: 100vh; color: #1a1a1a; }
-    .box { text-align: center; max-width: 30rem; padding: 2rem; }
-    code { background: #f2f2f2; padding: .15em .4em; border-radius: 3px; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>INOVUES · Cavity Moisture Model</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#101820; --ink-2:#3B4A55; --ink-3:#6C7C87;
+  --frost:#EDF1F3; --line:#D2DBE0; --card:#FFFFFF;
+  --pane:#C3D4DC; --cavity:#6E93A6; --water:#0E7490; --alarm:#A5321F;
+  --warm:#E8A33D;
+  --rail:340px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:'IBM Plex Sans',system-ui,sans-serif;
+  background:var(--frost); color:var(--ink);
+  font-size:14px; line-height:1.5;
+}
+.num{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+
+/* ---------- shell ---------- */
+.shell{display:grid;grid-template-columns:var(--rail) 1fr;min-height:100vh}
+.rail{
+  background:var(--card);border-right:1px solid var(--line);
+  padding:20px 18px 40px;overflow-y:auto;max-height:100vh;position:sticky;top:0;
+}
+.stage{padding:20px 26px 60px;max-width:1080px}
+
+.brand{font-size:15px;font-weight:600;letter-spacing:-.01em;margin:0 0 2px}
+.brand span{color:var(--ink-3);font-weight:400}
+.docid{font-size:11px;color:var(--ink-3);margin:0 0 20px}
+
+/* ---------- controls ---------- */
+fieldset{border:0;border-top:1px solid var(--line);margin:0 0 18px;padding:14px 0 0}
+legend{font-size:12px;font-weight:600;color:var(--ink-2);padding:0 8px 0 0}
+label{display:block;font-size:12px;color:var(--ink-2);margin:10px 0 3px}
+input[type=text],input[type=number],select{
+  width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:3px;
+  font-family:inherit;font-size:13px;background:#fff;color:var(--ink);
+}
+input:focus,select:focus,button:focus-visible{outline:2px solid var(--water);outline-offset:1px}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.trio{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.hint{font-size:11px;color:var(--ink-3);margin:3px 0 0}
+
+input[type=range]{width:100%;accent-color:var(--water);margin:6px 0 0}
+.presets{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+.chip{
+  font-size:11px;padding:3px 8px;border:1px solid var(--line);background:#fff;
+  border-radius:99px;cursor:pointer;color:var(--ink-2);font-family:inherit;
+}
+.chip[aria-pressed=true]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.achread{display:flex;justify-content:space-between;align-items:baseline;margin-top:8px}
+.achval{font-size:20px;font-weight:500}
+
+.run{
+  width:100%;margin-top:6px;padding:11px;border:0;border-radius:3px;
+  background:var(--ink);color:#fff;font-family:inherit;font-size:14px;font-weight:500;cursor:pointer;
+}
+.run:disabled{background:var(--ink-3);cursor:wait}
+.ghost{
+  width:100%;margin-top:8px;padding:9px;border:1px solid var(--line);border-radius:3px;
+  background:#fff;font-family:inherit;font-size:13px;cursor:pointer;color:var(--ink-2);
+  text-decoration:none;display:block;text-align:center;
+}
+
+.suggest{border:1px solid var(--line);border-top:0;background:#fff;max-height:190px;overflow-y:auto}
+.suggest button{
+  display:block;width:100%;text-align:left;padding:7px 9px;border:0;background:#fff;
+  font-family:inherit;font-size:12px;cursor:pointer;border-bottom:1px solid var(--frost);color:var(--ink-2);
+}
+.suggest button:hover{background:var(--frost)}
+
+/* ---------- modes ---------- */
+.modes{display:flex;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+.modes button{
+  border:0;background:none;font-family:inherit;font-size:14px;padding:8px 14px;
+  cursor:pointer;color:var(--ink-3);border-bottom:2px solid transparent;margin-bottom:-1px;
+}
+.modes button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--ink);font-weight:500}
+
+/* ---------- cross-section ---------- */
+.section-wrap{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:16px}
+svg{display:block;width:100%;height:auto}
+.drop{opacity:0;animation:bead .9s ease-out forwards}
+@keyframes bead{to{opacity:1;transform:translateY(0)}}
+@media (prefers-reduced-motion:reduce){.drop{animation:none;opacity:1}}
+
+/* ---------- results ---------- */
+.headline{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:20px 22px;margin-bottom:14px}
+.big{font-size:44px;font-weight:600;letter-spacing:-.02em;line-height:1.05}
+.big.dry{color:var(--water)}
+.big.wet{color:var(--alarm)}
+.bigsub{color:var(--ink-2);margin-top:4px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0;
+  border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--card);margin-bottom:14px}
+.stat{padding:12px 14px;border-right:1px solid var(--line)}
+.stat:last-child{border-right:0}
+.stat dt{font-size:11px;color:var(--ink-3);margin:0 0 3px}
+.stat dd{margin:0;font-size:19px;font-weight:500}
+
+table{width:100%;border-collapse:collapse;background:var(--card);font-size:13px}
+th,td{padding:7px 10px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+thead th{font-size:11px;color:var(--ink-3);font-weight:500;background:var(--frost)}
+tbody tr[data-current=true]{background:#F0F7FA;font-weight:500}
+
+.note{font-size:12px;color:var(--ink-2);background:#FBF7EC;border-left:3px solid var(--warm);
+  padding:10px 12px;margin:14px 0;border-radius:0 3px 3px 0}
+.err{font-size:13px;background:#FCEFED;border-left:3px solid var(--alarm);padding:12px 14px;border-radius:0 3px 3px 0}
+h2{font-size:17px;font-weight:600;margin:26px 0 8px;letter-spacing:-.01em}
+h3{font-size:14px;font-weight:600;margin:18px 0 6px}
+p{margin:0 0 10px;max-width:70ch}
+
+/* ---------- explain ---------- */
+.step{border-left:2px solid var(--line);padding:0 0 18px 16px;margin-left:6px;position:relative}
+.step:before{content:'';position:absolute;left:-5px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--ink)}
+.step h3{margin-top:0}
+.math{background:#0F1A20;color:#D6E4EA;padding:11px 13px;border-radius:3px;
+  font-family:'IBM Plex Mono',monospace;font-size:12px;line-height:1.75;overflow-x:auto;white-space:pre}
+.math b{color:var(--warm);font-weight:500}
+.scrub{display:flex;align-items:center;gap:10px;margin:10px 0 16px}
+.scrub input{flex:1}
+
+.empty{color:var(--ink-2);max-width:60ch}
+@media(max-width:820px){
+  .shell{grid-template-columns:1fr}
+  .rail{max-height:none;position:static;border-right:0;border-bottom:1px solid var(--line)}
+}
+</style>
 </head>
 <body>
-  <div class="box">
-    <h1>Cavity Moisture Model</h1>
-    <p>Scaffold deployed. Physics engine online.</p>
-    <p>Interface arrives in Chunk 5. Verify the backend at
-       <code>/healthz</code> and <code>/config</code>.</p>
-  </div>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script>
+const {useState,useEffect,useRef,useMemo} = React;
+const h = React.createElement;
+
+const f1=(x,d=1)=> x==null?'—':Number(x).toLocaleString(undefined,{minimumFractionDigits:d,maximumFractionDigits:d});
+
+/* ACH slider is logarithmic: the interesting range spans three orders of
+   magnitude, so a linear slider would spend 95% of its travel above 20. */
+const ACH_MIN=0.05, ACH_MAX=200;
+const posToAch = p => ACH_MIN*Math.pow(ACH_MAX/ACH_MIN, p/100);
+const achToPos = a => 100*Math.log(a/ACH_MIN)/Math.log(ACH_MAX/ACH_MIN);
+
+/* ------------------------------------------------------------------ */
+/* Cross-section: the hero. Drawn to scale from the actual dimensions. */
+/* ------------------------------------------------------------------ */
+function CrossSection({inp, res}){
+  const W=760, H=320;
+  const glassPx=14;
+  // Cavity width scales with the real offset, clamped so extremes stay legible.
+  const cavPx = Math.max(28, Math.min(190, inp.offset_in*1.6*90));
+  const total = glassPx*2+cavPx+glassPx;
+  const x0=(W-total)/2;
+  const xPane=x0, xCav=x0+glassPx, xIgu=xCav+cavPx, yTop=64, yBot=252;
+
+  const s = res && res.summary;
+  const tCold = res ? res.surfaces_at_nfrc_winter_f.t_cold : null;
+  const tWarm = res ? res.surfaces_at_nfrc_winter_f.t_warm : null;
+  const wet = s ? s.condensed_g_per_m2 > 0.5 : false;
+  const vent = inp.vent_interior;
+
+  // Water film height on the cold surface, relative to the 100 g/m2 drain cap.
+  const filmFrac = s ? Math.min(1, s.peak_surface_water_g_per_m2/100) : 0;
+  const filmH = filmFrac*(yBot-yTop)*0.55;
+
+  const arrows=[];
+  if(res){
+    const fromRoom = vent>=0.5;
+    const ax = fromRoom ? xIgu+glassPx+30 : xPane-30;
+    const dir = fromRoom ? -1 : 1;
+    for(let i=0;i<3;i++){
+      const y=yTop+42+i*58;
+      arrows.push(h('g',{key:'a'+i,opacity:.85},
+        h('line',{x1:ax,y1:y,x2:ax+dir*(fromRoom?38:38),y2:y,
+          stroke:'var(--water)',strokeWidth:2,markerEnd:'url(#arw)'}),
+        h('text',{x:ax+dir*20,y:y-7,textAnchor:'middle',fontSize:10,fill:'var(--water)'},
+          i===1?(fromRoom?'room air':'outdoor air'):'')
+      ));
+    }
+  }
+
+  return h('div',{className:'section-wrap'},
+    h('svg',{viewBox:`0 0 ${W} ${H}`,role:'img',
+      'aria-label':'Cross-section through the retrofitted window showing the cavity'},
+      h('defs',null,
+        h('marker',{id:'arw',markerWidth:7,markerHeight:7,refX:6,refY:3.5,orient:'auto'},
+          h('path',{d:'M0,0 L7,3.5 L0,7 z',fill:'var(--water)'})),
+        h('linearGradient',{id:'cav',x1:0,y1:0,x2:1,y2:0},
+          h('stop',{offset:'0%',stopColor:'#8FB3C4'}),
+          h('stop',{offset:'100%',stopColor:'#B9CFD9'}))
+      ),
+      // labels for the two environments
+      h('text',{x:14,y:26,fontSize:12,fill:'var(--ink-3)'},'Outdoors'),
+      h('text',{x:W-14,y:26,fontSize:12,fill:'var(--ink-3)',textAnchor:'end'},
+        `Room  ${f1(inp.t_in,0)}°F / ${f1(inp.rh_in,0)}% RH`),
+
+      // existing exterior pane
+      h('rect',{x:xPane,y:yTop,width:glassPx,height:yBot-yTop,fill:'var(--pane)',stroke:'#9DB4BF'}),
+      // cavity
+      h('rect',{x:xCav,y:yTop,width:cavPx,height:yBot-yTop,fill:'url(#cav)'}),
+      // new interior unit
+      h('rect',{x:xIgu,y:yTop,width:glassPx,height:yBot-yTop,fill:'var(--pane)',stroke:'#9DB4BF'}),
+
+      // condensate film on the cavity face of the existing pane
+      wet && filmH>0 ? h('rect',{x:xCav,y:yBot-filmH,width:Math.min(7,cavPx),height:filmH,
+        fill:'var(--water)',opacity:.75}) : null,
+      wet ? [0,1,2,3].map(i=>h('circle',{key:'d'+i,className:'drop',
+        cx:xCav+4,cy:yTop+40+i*46,r:3.4,fill:'var(--water)',
+        style:{animationDelay:(i*0.12)+'s'}})) : null,
+
+      arrows,
+
+      // surface temperature callouts
+      res? h('g',null,
+        h('line',{x1:xCav,y1:yTop-8,x2:xCav,y2:yTop,stroke:'var(--ink-3)'}),
+        h('text',{x:xCav-4,y:yTop-13,fontSize:11,textAnchor:'end',
+          fill: tCold<32?'var(--water)':'var(--ink-2)'},`${f1(tCold)}°F`),
+        h('line',{x1:xIgu,y1:yTop-8,x2:xIgu,y2:yTop,stroke:'var(--ink-3)'}),
+        h('text',{x:xIgu+4,y:yTop-13,fontSize:11,fill:'var(--ink-2)'},`${f1(tWarm)}°F`)
+      ):null,
+
+      // dimension line for the cavity
+      h('line',{x1:xCav,y1:yBot+16,x2:xIgu,y2:yBot+16,stroke:'var(--ink-3)'}),
+      h('text',{x:(xCav+xIgu)/2,y:yBot+32,fontSize:11,textAnchor:'middle',fill:'var(--ink-2)'},
+        `${f1(inp.offset_in,3)} in cavity`),
+
+      h('text',{x:xPane+glassPx/2,y:yBot+56,fontSize:10,textAnchor:'middle',fill:'var(--ink-3)'},'existing pane'),
+      h('text',{x:xIgu+glassPx/2,y:yBot+56,fontSize:10,textAnchor:'middle',fill:'var(--ink-3)'},'new unit')
+    ),
+    s? h('p',{className:'hint',style:{marginTop:10}},
+      wet ? `Condensate forms on the cavity face of the existing pane, at ${f1(tCold)}°F.`
+          : `No condensation: the cold surface stays above the cavity dew point all year.`):null
+  );
+}
+
+/* ------------------------------------------------------------------ */
+function App(){
+  const [cfg,setCfg]=useState(null);
+  const [inp,setInp]=useState({
+    address:'277 Park Avenue, New York, NY',
+    f_cold:0.013, u_assembly:0.70, f_warm:'',
+    width_in:60, height_in:96, offset_in:0.6024,
+    t_in:70, rh_in:35, ach:5, vent_interior:1
+  });
+  const [sug,setSug]=useState([]); const [typed,setTyped]=useState(false);
+  const [res,setRes]=useState(null); const [busy,setBusy]=useState(false);
+  const [err,setErr]=useState(null); const [mode,setMode]=useState('model');
+  const [hour,setHour]=useState(24);
+
+  useEffect(()=>{fetch('/config').then(r=>r.json()).then(setCfg).catch(()=>setCfg({}));},[]);
+
+  const set=(k,v)=>setInp(p=>({...p,[k]:v}));
+
+  // Mapbox autocomplete, debounced.
+  useEffect(()=>{
+    if(!typed||!cfg||!cfg.mapbox_token||inp.address.length<4){setSug([]);return;}
+    const t=setTimeout(()=>{
+      fetch(`https://api.mapbox.com/search/geocode/v6/forward?q=${encodeURIComponent(inp.address)}&limit=5&access_token=${cfg.mapbox_token}`)
+        .then(r=>r.json()).then(d=>setSug((d.features||[]).map(f=>f.properties.full_address||f.properties.name)))
+        .catch(()=>setSug([]));
+    },250);
+    return()=>clearTimeout(t);
+  },[inp.address,cfg,typed]);
+
+  const query=()=>{
+    const p=new URLSearchParams({
+      address:inp.address, f_cold:inp.f_cold, u_assembly:inp.u_assembly,
+      t_in:inp.t_in, rh_in:inp.rh_in, ach:inp.ach, vent_interior:inp.vent_interior,
+      width_in:inp.width_in, height_in:inp.height_in, offset_in:inp.offset_in, sweep:'true'
+    });
+    if(inp.f_warm!=='') p.set('f_warm',inp.f_warm);
+    return p.toString();
+  };
+
+  const run=()=>{
+    setBusy(true);setErr(null);setSug([]);
+    fetch('/calculate?'+query())
+      .then(async r=>{const d=await r.json(); if(!r.ok) throw new Error(d.message||'Request failed'); return d;})
+      .then(d=>{setRes(d);setBusy(false);})
+      .catch(e=>{setErr(e.message);setBusy(false);});
+  };
+
+  const s=res&&res.summary;
+
+  /* ---------------- rail ---------------- */
+  const rail = h('div',{className:'rail'},
+    h('p',{className:'brand'},'Cavity Moisture ',h('span',null,'· INOVUES')),
+    h('p',{className:'docid'},'ANLY-002'),
+
+    h('fieldset',null,h('legend',null,'Building'),
+      h('label',{htmlFor:'addr'},'Address'),
+      h('input',{id:'addr',type:'text',value:inp.address,
+        onChange:e=>{set('address',e.target.value);setTyped(true);}}),
+      sug.length?h('div',{className:'suggest'},sug.map((a,i)=>
+        h('button',{key:i,onClick:()=>{set('address',a);setSug([]);setTyped(false);}},a))):null,
+      cfg&&!cfg.weather_configured?h('p',{className:'hint'},
+        'Weather key not set on the server. Runs will fail until NREL_API_KEY is configured.'):null
+    ),
+
+    h('fieldset',null,h('legend',null,'Assembly'),
+      h('label',{htmlFor:'fc'},'f, cold surface'),
+      h('input',{id:'fc',type:'number',step:0.001,min:0,max:1,value:inp.f_cold,
+        onChange:e=>set('f_cold',e.target.value)}),
+      h('p',{className:'hint'},'From WINDOW/THERM. 0.013 SWR-VIG, 0.300 SWR-IG.'),
+      h('label',{htmlFor:'u'},'Assembly U-value (W/m²K)'),
+      h('input',{id:'u',type:'number',step:0.01,min:0.05,value:inp.u_assembly,
+        onChange:e=>set('u_assembly',e.target.value)}),
+      h('label',{htmlFor:'fw'},'f, warm surface (optional)'),
+      h('input',{id:'fw',type:'number',step:0.001,min:0,max:1,value:inp.f_warm,
+        placeholder:'estimated',onChange:e=>set('f_warm',e.target.value)}),
+      h('p',{className:'hint'},'WINDOW reports this directly. Leave blank to estimate it.')
+    ),
+
+    h('fieldset',null,h('legend',null,'Geometry'),
+      h('div',{className:'trio'},
+        h('div',null,h('label',{htmlFor:'w'},'Width in'),
+          h('input',{id:'w',type:'number',step:1,min:1,value:inp.width_in,onChange:e=>set('width_in',e.target.value)})),
+        h('div',null,h('label',{htmlFor:'ht'},'Height in'),
+          h('input',{id:'ht',type:'number',step:1,min:1,value:inp.height_in,onChange:e=>set('height_in',e.target.value)})),
+        h('div',null,h('label',{htmlFor:'off'},'Offset in'),
+          h('input',{id:'off',type:'number',step:0.05,min:0.05,value:inp.offset_in,onChange:e=>set('offset_in',e.target.value)}))
+      ),
+      h('p',{className:'hint'},'Offset is the design lever. Width and height scale the totals but not the rate.')
+    ),
+
+    h('fieldset',null,h('legend',null,'Room'),
+      h('div',{className:'pair'},
+        h('div',null,h('label',{htmlFor:'ti'},'Air °F'),
+          h('input',{id:'ti',type:'number',value:inp.t_in,onChange:e=>set('t_in',e.target.value)})),
+        h('div',null,h('label',{htmlFor:'rh'},'RH %'),
+          h('input',{id:'rh',type:'number',min:0,max:100,value:inp.rh_in,onChange:e=>set('rh_in',e.target.value)}))
+      )
+    ),
+
+    h('fieldset',null,h('legend',null,'Vent design'),
+      h('div',{className:'achread'},
+        h('span',{className:'achval num'},f1(inp.ach,2)),
+        h('span',{className:'hint'},'air changes / hour')),
+      h('input',{type:'range',min:0,max:100,step:0.5,value:achToPos(inp.ach),
+        'aria-label':'Air change rate',
+        onChange:e=>set('ach',Math.round(posToAch(+e.target.value)*100)/100)}),
+      h('div',{className:'presets'},
+        cfg&&cfg.ach_presets?Object.entries(cfg.ach_presets).map(([k,v])=>
+          h('button',{key:k,className:'chip','aria-pressed':Math.abs(inp.ach-v)<0.001,
+            title:(cfg.ach_preset_labels||{})[k]||'',onClick:()=>set('ach',v)},k.replace('_',' '))):null),
+      h('label',{htmlFor:'vent'},'Vents to'),
+      h('select',{id:'vent',value:inp.vent_interior,onChange:e=>set('vent_interior',+e.target.value)},
+        h('option',{value:1},'Room air'),
+        h('option',{value:0.5},'Half and half'),
+        h('option',{value:0},'Outdoor air')),
+      h('p',{className:'hint'},'Winter outdoor air is cold but very dry, so venting outward can dry a cavity that room air would wet.')
+    ),
+
+    h('button',{className:'run',onClick:run,disabled:busy},busy?'Running 8,760 hours…':'Run the year'),
+    res?h('a',{className:'ghost',href:'/export.xlsx?'+query()},'Download Excel report'):null
+  );
+
+  /* ---------------- stage ---------------- */
+  const modes = h('div',{className:'modes',role:'tablist'},
+    ['explain','model','present'].map(m=>
+      h('button',{key:m,role:'tab','aria-selected':mode===m,onClick:()=>setMode(m)},
+        m==='explain'?'Explain':m==='model'?'Model':'Present')));
+
+  let body;
+  if(err) body = h('div',{className:'err'},err);
+  else if(!res) body = h('div',null,
+    h('h2',null,'Set up a window, then run the year'),
+    h('p',{className:'empty'},
+      'This model tracks how much water is actually in the cavity air, hour by hour, across a full typical year. '+
+      'It replaces the assumption that the cavity sits at room dew point.'),
+    h('p',{className:'empty'},'Adjust the offset and the vent rate on the left to see how the design changes the answer.'));
+  else if(mode==='model') body = h(ModelView,{inp,res});
+  else if(mode==='explain') body = h(ExplainView,{inp,res,hour,setHour});
+  else body = h(PresentView,{inp,res});
+
+  return h('div',{className:'shell'}, rail,
+    h('main',{className:'stage'}, modes,
+      res?h(CrossSection,{inp,res}):null, body));
+}
+
+/* ---------------- Model ---------------- */
+function ModelView({inp,res}){
+  const s=res.summary, pw=s.per_window;
+  const wet=s.condensed_g_per_m2>0.5;
+  return h('div',null,
+    h('div',{className:'headline',style:{marginTop:14}},
+      h('div',{className:'big '+(wet?'wet':'dry')},
+        pw?`${f1(pw.condensed_litres_per_year,2)} litres`:`${f1(s.condensed_g_per_m2)} g/m²`),
+      h('div',{className:'bigsub'},
+        pw?`of condensate per window, per year — ${f1(pw.glazing_area_m2,2)} m² glazing`
+           :'per square metre of glazing, per year')),
+
+    h('dl',{className:'stats'},
+      h('div',{className:'stat'},h('dt',null,'Hours with condensation'),h('dd',{className:'num'},s.hours_condensing.toLocaleString())),
+      h('div',{className:'stat'},h('dt',null,'Cavity dew point, mean'),h('dd',{className:'num'},f1(s.cavity_dew_point_f.mean)+'°F')),
+      h('div',{className:'stat'},h('dt',null,'Room dew point'),h('dd',{className:'num'},f1(s.room_dew_point_f)+'°F')),
+      h('div',{className:'stat'},h('dt',null,'Drained out'),h('dd',{className:'num'},f1(s.drained_g_per_m2)+' g/m²'))),
+
+    h('h2',null,'How the vent design changes it'),
+    h('table',null,
+      h('thead',null,h('tr',null,
+        h('th',null,'Vent'),h('th',null,'ACH'),h('th',null,'Condensed g/m²'),
+        h('th',null,'Litres/window'),h('th',null,'Wet hours'))),
+      h('tbody',null,(res.sweep||[]).map(r=>
+        h('tr',{key:r.preset,'data-current':Math.abs(r.ach-s.ach)<0.001},
+          h('td',null,r.preset.replace('_',' ')),
+          h('td',{className:'num'},f1(r.ach,2)),
+          h('td',{className:'num'},f1(r.condensed_g_per_m2)),
+          h('td',{className:'num'},r.per_window?f1(r.per_window.condensed_litres_per_year,2):'—'),
+          h('td',{className:'num'},r.hours_condensing.toLocaleString()))))),
+    h('div',{className:'note'},
+      'Read the mass column, not the hours. Condensed mass rises steadily as you open the vent, '+
+      'but wet hours does not: a sealed cavity cycles a small trapped inventory across many hours. '+
+      'Judging by hours alone makes a sealed design look worse than one delivering far more water.'),
+
+    h('h2',null,'Assumptions behind these numbers'),
+    h('p',null,'Three inputs are engineering estimates rather than measurements, and they move the result:'),
+    h('table',null,
+      h('thead',null,h('tr',null,h('th',null,'Assumption'),h('th',null,'Value'),h('th',null,'How to settle it'))),
+      h('tbody',null,
+        h('tr',null,h('td',null,'Air change rate'),h('td',{className:'num'},f1(s.ach,2)+' /hr'),
+          h('td',null,'Tracer-gas or pressure-decay test')),
+        h('tr',null,h('td',null,'Retained condensate film'),h('td',{className:'num'},'100 g/m²'),
+          h('td',null,'Lab observation on vertical glass')),
+        h('tr',null,h('td',null,'Warm-surface f'),h('td',{className:'num'},f1(res.inputs.f_warm,3)),
+          h('td',null,res.inputs.f_warm_source==='supplied'?'Supplied':'Read it from WINDOW')))),
+
+    h('h2',null,'Weather'),
+    h('p',null,`${res.weather.source}, ${res.weather.hours.toLocaleString()} hours at `+
+      `${res.location.matched_address}. Outdoor air ranges `+
+      `${f1(res.weather.t_out_c_min*9/5+32)}°F to ${f1(res.weather.t_out_c_max*9/5+32)}°F.`)
+  );
+}
+
+/* ---------------- Explain ---------------- */
+function ExplainView({inp,res,hour,setHour}){
+  const s=res.summary;
+  const tCold=res.surfaces_at_nfrc_winter_f.t_cold, tWarm=res.surfaces_at_nfrc_winter_f.t_warm;
+  return h('div',null,
+    h('h2',{style:{marginTop:18}},'What the model does, in five steps'),
+    h('p',null,'Every number below is from the run you just made.'),
+
+    h('div',{className:'step'},
+      h('h3',null,'1. Turn the f-value into a surface temperature'),
+      h('p',null,'f is the fraction of the way from outdoor to indoor temperature that a surface sits. '+
+        'It depends only on geometry and materials, so one value holds all year.'),
+      h('div',{className:'math'},
+        `T_surface = T_out + f × (T_room − T_out)\n`+
+        `          = −0.4 + ${res.inputs.f_cold} × (${f1(inp.t_in,0)} − (−0.4))\n`+
+        `          = `,h('b',null,`${f1(tCold)} °F`),`   at NFRC winter conditions`)),
+
+    h('div',{className:'step'},
+      h('h3',null,'2. Find the cavity air temperature'),
+      h('p',null,'The air sits between the two surfaces, pulled toward each in proportion to how tightly '+
+        'it couples to them. Both are glass, so it lands near the midpoint.'),
+      h('div',{className:'math'},
+        `T_air = (h_warm × T_warm + h_cold × T_cold) / (h_warm + h_cold)\n`+
+        `      = (3.0 × ${f1(tWarm)} + 3.0 × ${f1(tCold)}) / 6.0\n`+
+        `      = `,h('b',null,`${f1((tWarm+tCold)/2)} °F`))),
+
+    h('div',{className:'step'},
+      h('h3',null,'3. Track water, not humidity'),
+      h('p',null,'Relative humidity moves when you heat air even though no water entered or left. '+
+        'Humidity ratio W — kilograms of water per kilogram of dry air — does not. '+
+        'You cannot write a conservation law in RH.'),
+      h('div',{className:'math'},
+        `Room air at ${f1(inp.t_in,0)} °F / ${f1(inp.rh_in,0)}% RH\n`+
+        `dew point = `,h('b',null,`${f1(s.room_dew_point_f)} °F`),
+        `\ncold surface = ${f1(tCold)} °F  →  `,
+        h('b',null, tCold < s.room_dew_point_f ? 'below the dew point, so water deposits'
+                                              : 'above the dew point, so nothing deposits'))),
+
+    h('div',{className:'step'},
+      h('h3',null,'4. Let the vent run for an hour'),
+      h('p',null,'Vent air arrives and cavity air leaves, so the cavity chases its supply exponentially. '+
+        'Once it reaches saturation it pins there, and everything further arriving deposits as liquid.'),
+      h('div',{className:'math'},
+        `W(t) = W_supply + (W₀ − W_supply) × e^(−ACH·t)\n\n`+
+        `then, once saturated:\n`+
+        `rate = ACH × m_cavity × (W_supply − W_sat)\n`+
+        `     = ${f1(s.ach,2)} × m × ΔW    at `,h('b',null,`${f1(s.ach,2)} air changes/hour`))),
+
+    h('div',{className:'step'},
+      h('h3',null,'5. Drain what the glass cannot hold'),
+      h('p',null,'Condensate beyond a thin film runs down the glass and out the weep path. '+
+        'Without this the model accumulates water without limit.'),
+      h('div',{className:'math'},
+        `condensed  ${f1(s.condensed_g_per_m2)} g/m²\n`+
+        `drained    ${f1(s.drained_g_per_m2)} g/m²\n`+
+        `peak film  `,h('b',null,`${f1(s.peak_surface_water_g_per_m2)} g/m²`),`  (cap 100)`)),
+
+    h('div',{className:'note'},
+      'Repeat that 8,760 times and you have the year. The result is a cavity dew point that comes '+
+      'from the physics rather than from assuming the cavity matches the room.')
+  );
+}
+
+/* ---------------- Present ---------------- */
+function PresentView({inp,res}){
+  const s=res.summary, pw=s.per_window, wet=s.condensed_g_per_m2>0.5;
+  const sweep=res.sweep||[];
+  const sealed=sweep.find(r=>r.preset==='sealed'), open=sweep.find(r=>r.preset==='open_vent');
+  const ratio = sealed&&open&&sealed.condensed_g_per_m2>0
+    ? open.condensed_g_per_m2/sealed.condensed_g_per_m2 : null;
+  return h('div',null,
+    h('div',{className:'headline',style:{marginTop:14}},
+      h('div',{className:'big '+(wet?'wet':'dry')},
+        pw?`${f1(pw.condensed_litres_per_year,2)} litres`:`${f1(s.condensed_g_per_m2)} g/m²`),
+      h('div',{className:'bigsub'},`per window each year, at ${res.location.matched_address}`)),
+    h('p',null,
+      `A ${f1(inp.width_in,0)} × ${f1(inp.height_in,0)} inch window with a `+
+      `${f1(inp.offset_in,3)} inch cavity, in a room held at ${f1(inp.t_in,0)} °F and `+
+      `${f1(inp.rh_in,0)}% relative humidity.`),
+    h('p',null,
+      wet? `The cavity face of the existing pane reaches ${f1(res.surfaces_at_nfrc_winter_f.t_cold)} °F, `+
+           `below the ${f1(s.room_dew_point_f)} °F dew point of the room air reaching it. Water deposits `+
+           `on the glass and drains out the weep path.`
+         : `The cavity face of the existing pane stays above the dew point of the air reaching it, `+
+           `so no water deposits.`),
+    ratio? h('p',null,
+      `Sealing the cavity matters more than any other single choice: an open vent collects about `+
+      `${f1(ratio,0)}× the water a sealed one does. Room air is far wetter than a cold cavity can hold, `+
+      `so ventilating to the interior supplies the very water that condenses.`):null,
+    h('h2',null,'What this means'),
+    h('p',null,
+      `The existing calculator assumes the cavity sits at room dew point. This model computes it instead, `+
+      `and finds condensation in ${s.hours_condensing.toLocaleString()} hours of the year against `+
+      `${s.hours_condensing_room_assumption.toLocaleString()} under that assumption.`),
+    h('div',{className:'note'},
+      'Air change rate and retained film thickness are engineering estimates, not measurements. '+
+      'They should be confirmed by testing before these figures set an operating limit.')
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(h(App));
+</script>
 </body>
 </html>
