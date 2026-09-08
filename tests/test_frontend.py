@@ -353,3 +353,19 @@ def test_orientation_chart_reports_the_north_south_spread(html):
     because absorptance cancels out of it. It is stated, not left to the eye."""
     assert "visible condensation than south" in html
     assert "Trust the comparison more than any single bar" in html
+
+
+# ===========================================================================
+# 7. THE ODOO IFRAME MUST SEE REDEPLOYS
+# ===========================================================================
+
+
+def test_index_revalidates_on_every_visit(client):
+    """[SPEC] The page is served inside an Odoo iframe. Chrome caches that
+    copy under Odoo's site, separately from the direct URL, so a stale page
+    can persist there long after a redeploy. no-cache forces an ETag check
+    each visit; the API responses are not affected."""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert r.headers.get("Cache-Control") == "no-cache"
+    assert r.headers.get("ETag"), "no ETag, so no-cache would refetch the whole page every time"

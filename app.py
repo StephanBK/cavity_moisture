@@ -281,7 +281,15 @@ def _error_response(exc):
 
 @app.route("/")
 def index():
-    return send_from_directory(app.static_folder, "index.html")
+    # no-cache does not mean "never cache": it means revalidate before reuse.
+    # Flask sends an ETag, so the browser re-checks every visit and a redeploy
+    # shows up immediately. Without this, condensation_calc produced two
+    # "I still see the old version" incidents, one of them because Chrome
+    # partitions its cache per top-level site: the copy shown inside the Odoo
+    # iframe is cached separately from the copy at the direct URL.
+    resp = send_from_directory(app.static_folder, "index.html")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @app.route("/config")
