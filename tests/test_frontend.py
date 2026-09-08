@@ -195,3 +195,123 @@ def test_empty_state_directs_the_user(html):
     """[SPEC] The first thing anyone sees is an empty stage. It should say what
     to do, not sit blank."""
     assert "Set up a window, then run the year" in html
+
+
+# ===========================================================================
+# 4. THE SCRIPT MUST PARSE
+# ===========================================================================
+#
+# Build session 4 found the live page blank: commit b0a2ff6 left one ternary
+# parenthesis unclosed in ModelView, and a syntax error anywhere in a <script>
+# block stops the whole block, so React never mounted. 342 tests passed, /calculate
+# was validated live, and nobody opened the page. A page with no build step
+# needs a parse check, and that is what these two tests are.
+
+
+def _inline_script(html: str) -> str:
+    lines = html.split("\n")
+    start = next(i for i, l in enumerate(lines) if l.strip() == "<script>")
+    end = max(i for i, l in enumerate(lines) if l.strip() == "</script>")
+    return "\n".join(lines[start + 1:end])
+
+
+def _js_bracket_imbalance(src: str):
+    """Walk the script, ignoring strings, template literals and comments, and
+    return the first unmatched bracket as (line, char) or None if balanced.
+
+    This is not a parser. It is the narrowest check that would have caught
+    b0a2ff6, written without a JavaScript dependency so it always runs. The
+    node-based test below is the real thing where node is installed.
+    """
+    pairs = {")": "(", "}": "{", "]": "["}
+    stack = []          # (bracket, line)
+    mode = []           # nested template-literal state: 'tpl' or 'expr'
+    i, line, n = 0, 1, len(src)
+    while i < n:
+        c = src[i]
+        if c == "\n":
+            line += 1
+        if mode and mode[-1] == "tpl":
+            if c == "\\":
+                i += 2; continue
+            if c == "`":
+                mode.pop()
+            elif src.startswith("${", i):
+                mode.append("expr"); stack.append(("${", line)); i += 2; continue
+            i += 1; continue
+        if src.startswith("//", i):
+            j = src.find("\n", i); i = n if j < 0 else j; continue
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2)
+            line += src.count("\n", i, j); i = j + 2; continue
+        if c in "'\"":
+            j = i + 1
+            while j < n and src[j] != c:
+                j += 2 if src[j] == "\\" else 1
+            i = j + 1; continue
+        if c == "`":
+            mode.append("tpl"); i += 1; continue
+        if c in "([{":
+            stack.append((c, line))
+        elif c in ")]}":
+            if c == "}" and stack and stack[-1][0] == "${":
+                stack.pop(); mode.pop()
+            elif not stack or stack[-1][0] != pairs[c]:
+                return (line, c)
+            else:
+                stack.pop()
+        i += 1
+    return (stack[-1][1], stack[-1][0]) if stack else None
+
+
+def test_page_script_brackets_balance(html):
+    """[SPEC] Every bracket in the inline script closes. b0a2ff6 would fail
+    here at the orientations panel in ModelView."""
+    bad = _js_bracket_imbalance(_inline_script(html))
+    assert bad is None, f"unmatched bracket near script line {bad[0]}: {bad[1]!r}"
+
+
+def test_page_script_parses_with_node(html, tmp_path):
+    """[SPEC] The real parse, where node exists. Skipped elsewhere, like the
+    LibreOffice recalculation test; the bracket check above always runs."""
+    import shutil
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node not installed")
+    js = tmp_path / "page.js"
+    js.write_text(_inline_script(html))
+    proc = subprocess.run([node, "--check", str(js)], capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+
+
+# ===========================================================================
+# 5. EXPLAIN MODE COVERS THE WHOLE MODEL
+# ===========================================================================
+
+
+def test_explain_mode_covers_the_surface_energy_balance(html):
+    """[SPEC] Build session 3 added sky radiation, solar gain, wind and
+    orientation to the engine. The explanation must describe the model that
+    runs, not the air-only model it replaced."""
+    assert "eight steps" in html
+    assert "Swinbank" in html
+    assert "5.7 + 3.8" in html
+    assert "α × I_poa / h_out" in html
+    assert "Cars frost on clear nights" in html
+
+
+def test_explain_mode_names_the_three_hour_counts(html):
+    """[SPEC] Condensing, present and visible answer different questions.
+    A reader must be told which one is theirs."""
+    for label in ("Condensing", "Water present", "Water visible"):
+        assert label in html
+    assert "what an occupant sees" in html
+    assert "use mass, not hours, to rank vent designs" in html
+
+
+def test_explain_mode_math_is_optional(html):
+    """[SPEC] Customers read prose; engineers flip a switch. The formulas
+    are behind a toggle and the plain-words paragraph is never hidden."""
+    assert "Show the math" in html and "Hide the math" in html
+    assert "showMath ? h('div',{className:'math'}" in html

@@ -446,7 +446,7 @@ function ModelView({inp,res}){
         'January receives more irradiance than in July, because the low sun strikes vertical '+
         'glass near normal. Absorptance is an ESTIMATE, but it is a common factor across all '+
         'four facades, so the comparison holds even where the absolute figures move.')
-    ):null,
+    ):null),
 
     h('h2',null,'How the vent design changes it'),
     h('table',null,
@@ -488,15 +488,29 @@ function ModelView({inp,res}){
 function ExplainView({inp,res,hour,setHour}){
   const s=res.summary;
   const tCold=res.surfaces_at_nfrc_winter_f.t_cold, tWarm=res.surfaces_at_nfrc_winter_f.t_warm;
+  const [showMath,setShowMath]=useState(false);
+  // M() renders a formula block only when the reader asked for it. Every step
+  // keeps its plain-words paragraph; the math is optional, never the other way round.
+  const M=(...kids)=> showMath ? h('div',{className:'math'},...kids) : null;
+  const alpha=Number(res.inputs.absorptance)||0, sky=!!res.inputs.sky_radiation;
+  const phys=explainPhysics(res, alpha);
   return h('div',null,
-    h('h2',{style:{marginTop:18}},'What the model does, in five steps'),
-    h('p',null,'Every number below is from the run you just made.'),
+    h('h2',{style:{marginTop:18}},'What the model does, in eight steps'),
+    h('p',null,'Every number below is from the run you just made. ',
+      'Steps 1 to 5 are the moisture balance; steps 6 and 7 are the surface energy balance added in build session 3; ',
+      'step 8 explains the three hour counts on the results page.'),
+    h('div',{className:'scrub',style:{margin:'4px 0 14px'}},
+      h('button',{className:'chip','aria-pressed':showMath,onClick:()=>setShowMath(v=>!v)},
+        showMath?'Hide the math':'Show the math'),
+      h('span',{className:'hint',style:{margin:0}}, showMath
+        ? 'Formulas as implemented in the engine, in SI. Temperatures on this page are shown in °F.'
+        : 'Plain words only. Flip the switch to see every formula with the numbers from this run.')),
 
     h('div',{className:'step'},
       h('h3',null,'1. Turn the f-value into a surface temperature'),
       h('p',null,'f is the fraction of the way from outdoor to indoor temperature that a surface sits. '+
         'It depends only on geometry and materials, so one value holds all year.'),
-      h('div',{className:'math'},
+      M(
         `T_surface = T_out + f × (T_room − T_out)\n`+
         `          = −0.4 + ${res.inputs.f_cold} × (${f1(inp.t_in,0)} − (−0.4))\n`+
         `          = `,h('b',null,`${f1(tCold)} °F`),`   at NFRC winter conditions`)),
@@ -505,7 +519,7 @@ function ExplainView({inp,res,hour,setHour}){
       h('h3',null,'2. Find the cavity air temperature'),
       h('p',null,'The air sits between the two surfaces, pulled toward each in proportion to how tightly '+
         'it couples to them. Both are glass, so it lands near the midpoint.'),
-      h('div',{className:'math'},
+      M(
         `T_air = (h_warm × T_warm + h_cold × T_cold) / (h_warm + h_cold)\n`+
         `      = (3.0 × ${f1(tWarm)} + 3.0 × ${f1(tCold)}) / 6.0\n`+
         `      = `,h('b',null,`${f1((tWarm+tCold)/2)} °F`))),
@@ -515,7 +529,7 @@ function ExplainView({inp,res,hour,setHour}){
       h('p',null,'Relative humidity moves when you heat air even though no water entered or left. '+
         'Humidity ratio W — kilograms of water per kilogram of dry air — does not. '+
         'You cannot write a conservation law in RH.'),
-      h('div',{className:'math'},
+      M(
         `Room air at ${f1(inp.t_in,0)} °F / ${f1(inp.rh_in,0)}% RH\n`+
         `dew point = `,h('b',null,`${f1(s.room_dew_point_f)} °F`),
         `\ncold surface = ${f1(tCold)} °F  →  `,
@@ -526,7 +540,7 @@ function ExplainView({inp,res,hour,setHour}){
       h('h3',null,'4. Let the vent run for an hour'),
       h('p',null,'Vent air arrives and cavity air leaves, so the cavity chases its supply exponentially. '+
         'Once it reaches saturation it pins there, and everything further arriving deposits as liquid.'),
-      h('div',{className:'math'},
+      M(
         `W(t) = W_supply + (W₀ − W_supply) × e^(−ACH·t)\n\n`+
         `then, once saturated:\n`+
         `rate = ACH × m_cavity × (W_supply − W_sat)\n`+
@@ -536,15 +550,96 @@ function ExplainView({inp,res,hour,setHour}){
       h('h3',null,'5. Drain what the glass cannot hold'),
       h('p',null,'Condensate beyond a thin film runs down the glass and out the weep path. '+
         'Without this the model accumulates water without limit.'),
-      h('div',{className:'math'},
+      M(
         `condensed  ${f1(s.condensed_g_per_m2)} g/m²\n`+
         `drained    ${f1(s.drained_g_per_m2)} g/m²\n`+
         `peak film  `,h('b',null,`${f1(s.peak_surface_water_g_per_m2)} g/m²`),`  (cap 100)`)),
 
+    h('div',{className:'step'},
+      h('h3',null,'6. The sky pulls heat out of the glass'),
+      h('p',null,'Glass radiates long-wave heat to the sky, and a clear sky is far colder than the air. '+
+        'The heat it loses is replaced by the outdoor air, so the outer pane settles below air temperature. '+
+        'Cars frost on clear nights when the air never freezes for exactly this reason. '+
+        'Cloud raises the sky back toward air temperature and switches the effect off; fog switches it off completely. '+
+        'At 277 Park only 42 % of hours are clear or nearly clear, so the cloud data is not optional.'),
+      h('p',null, sky
+        ? h('span',null,'Sky radiation is ',h('b',null,'on'),' in this run. On a calm clear NFRC winter night the outer pane sits about ',
+            h('b',null,`${f1(phys.skyDropF)} °F`),' below the air. That gap is measured against the ~11 °F between the cold face and the room dew point.')
+        : h('span',null,'Sky radiation is ',h('b',null,'off'),' in this run, so this step contributes nothing and the model reproduces the air-only result. ',
+            'Switched on, a calm clear winter night would pull the pane about ',h('b',null,`${f1(phys.skyDropF)} °F`),' below the air.')),
+      M(`T_sky   = 0.0552 × T_air^1.5              (Swinbank, clear sky, kelvin)\n`+
+        `        = 0.0552 × ${f1(phys.tAirK)}^1.5 = `,h('b',null,`${f1(phys.tSkyK)} K`),`   (air ${f1(phys.tAirK)} K)\n`+
+        `T_sky   → T_air × opacity              cloud: clear 0, cirrus 0.35, water 0.90, fog 1.00\n\n`+
+        `q       = ε · σ · F · (T_s⁴ − T_sky⁴)   ε 0.84, F 0.5 (wall sees half sky)\n`+
+        `ΔT      = −q / h_out\n`+
+        `        = −${f1(phys.qSky)} / ${f1(phys.hCalm)} = `,h('b',null,`${f1(phys.skyDropC)} °C = ${f1(phys.skyDropF)} °F`),`   calm, clear`)),
+
+    h('div',{className:'step'},
+      h('h3',null,'7. The sun pushes heat back in; wind carries it away'),
+      h('p',null,'Sunlight absorbed in the outer pane leaves again by convection to the outdoor air, so the pane floats above '+
+        'air temperature while the sun is on it. Wind sheds that heat faster and shrinks the boost. '+
+        'Only the outer pane is warmed; sunlight that reaches the inner unit is ignored, which keeps the cavity cooler '+
+        'than reality and therefore predicts more water, not less. '+
+        'A third of all wet hours fall between 09:00 and 16:00 and most fall in winter, when a low sun strikes south glass almost head-on. '+
+        'That is why north and south facades of the same building no longer return the same answer.'),
+      h('p',null, alpha>0
+        ? h('span',null,'Absorptance is ',h('b',null,`${f1(alpha,2)}`),' and the facade faces ',h('b',null,String(res.inputs.orientation)),'. ',
+            'On a calm winter noon with 300 W/m² on the glass that is a boost of about ',h('b',null,`+${f1(phys.sunCalmF)} °F`),
+            ', falling to ',h('b',null,`+${f1(phys.sunWindF)} °F`),' when the wind reaches 3 m/s. ',
+            'Absorptance is assumption #6: it depends on the coating and every absolute solar figure scales with it.')
+        : h('span',null,'Absorptance is ',h('b',null,'0'),', so the sun is switched off and orientation has no effect in this run. ',
+            'Set a value above zero in the sidebar to switch it on; the four-facade comparison then appears on the results page.')),
+      M(`h_out   = 5.7 + 3.8 × v                (McAdams; v in m/s, measured at 2 m)\n`+
+        `        = ${f1(phys.hCalm)} calm   ·   ${f1(phys.hWind)} at 3 m/s\n\n`+
+        `ΔT      = α × I_poa / h_out            I_poa = beam·cosθ + diffuse + ground-reflected\n`+
+        `        = ${f1(alpha,2)} × 300 / ${f1(phys.hCalm)} = `,h('b',null,`+${f1(phys.sunCalmC)} °C = +${f1(phys.sunCalmF)} °F`),`   calm\n`+
+        `        = ${f1(alpha,2)} × 300 / ${f1(phys.hWind)} = `,h('b',null,`+${f1(phys.sunWindC)} °C = +${f1(phys.sunWindF)} °F`),`   3 m/s wind\n\n`+
+        `T_cold  = T_out + f_cold × (T_room − T_out) + ΔT_sun + ΔT_sky`)),
+
+    h('div',{className:'step'},
+      h('h3',null,'8. Three hour counts, and who each one is for'),
+      h('p',null,'Water laid down at 3 am is still on the glass at 9 am. So the model keeps a liquid inventory and reports three '+
+        'different counts, which a room-dew-point model cannot do because it has no inventory at all.'),
+      h('table',{style:{margin:'6px 0 12px'}},
+        h('thead',null,h('tr',null,h('th',null,'Count'),h('th',null,'This run'),h('th',null,'Means'),h('th',null,'Use it for'))),
+        h('tbody',null,
+          h('tr',null,h('td',null,'Condensing'),h('td',null,f1(s.hours_condensing,0)),h('td',null,'water is actively depositing'),h('td',null,'mass balance, litres per year')),
+          h('tr',null,h('td',null,'Water present'),h('td',null,f1(s.hours_water_present,0)),h('td',null,'any liquid at all, threshold-free'),h('td',null,'the raw modelled fact')),
+          h('tr',{'data-current':true},h('td',null,'Water visible'),h('td',null,f1(s.hours_water_visible,0)),
+            h('td',null,`film thicker than ${f1(s.visible_threshold_um,0)} µm`),h('td',null,'what an occupant sees')))),
+      h('p',null,'A sealed cavity deposits a few nanometres per hour and peaks near 3 µm; a vented one peaks near 100 µm. '+
+        'No plausible optical threshold falls between those, so the exact cut point is not load-bearing. '+
+        `The ${f1(s.visible_threshold_um,0)} µm default is assumption #5 and is labelled unmeasured. `+
+        'Peak film in this run: ',h('b',null,`${f1(s.peak_surface_water_g_per_m2,2)} g/m² = ${f1(s.peak_surface_water_g_per_m2,2)} µm`),'.'),
+      h('div',{className:'note'},
+        'Water-present hours barely move with ACH while condensed mass swings by hundreds of times. '+
+        'Use the hour counts to describe the tenant experience; use mass, not hours, to rank vent designs.'),
+      M(`present  ≥ condensing   always (the difference is the retained film)\n`+
+        `visible  = hours with film > ${f1(s.visible_threshold_um,0)} µm     1 g/m² of water = 1 µm of film\n`+
+        `this run: ${f1(s.hours_condensing,0)} condensing · ${f1(s.hours_water_present,0)} present · `,h('b',null,`${f1(s.hours_water_visible,0)} visible`))),
+
     h('div',{className:'note'},
       'Repeat that 8,760 times and you have the year. The result is a cavity dew point that comes '+
-      'from the physics rather than from assuming the cavity matches the room.')
+      'from the physics rather than from assuming the cavity matches the room. '+
+      'Every simplification in steps 6 and 7 errs toward predicting more water, not less.')
   );
+}
+
+/* Worked numbers for steps 6 and 7 at NFRC winter conditions: -18 °C outdoors,
+   clear sky, 300 W/m² on the glass. Mirrors engine/cavity.py exactly so the
+   page can never disagree with the engine. */
+function explainPhysics(res, alpha){
+  const SIGMA=5.670374419e-8, EPS=0.84, F=0.5;
+  const tOutC=-18.0, tAirK=tOutC+273.15;
+  const tColdC=(res.surfaces_at_nfrc_winter_f.t_cold-32)*5/9, tSK=tColdC+273.15;
+  const hCalm=5.7, hWind=5.7+3.8*3;
+  const tSkyK=0.0552*Math.pow(tAirK,1.5);
+  const qSky=EPS*SIGMA*F*(Math.pow(tSK,4)-Math.pow(tSkyK,4));
+  const skyDropC=-qSky/hCalm;
+  const sunCalmC=alpha*300/hCalm, sunWindC=alpha*300/hWind;
+  const dF=c=>c*9/5;
+  return {tAirK,tSkyK,qSky,hCalm,hWind,skyDropC,skyDropF:dF(skyDropC),
+          sunCalmC,sunCalmF:dF(sunCalmC),sunWindC,sunWindF:dF(sunWindC)};
 }
 
 /* ---------------- Present ---------------- */
