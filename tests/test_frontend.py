@@ -315,3 +315,41 @@ def test_explain_mode_math_is_optional(html):
     are behind a toggle and the plain-words paragraph is never hidden."""
     assert "Show the math" in html and "Hide the math" in html
     assert "showMath ? h('div',{className:'math'}" in html
+
+
+# ===========================================================================
+# 6. THE TWO EXPLAIN-MODE GRAPHICS
+# ===========================================================================
+
+
+def test_energy_flow_diagram_shows_every_term_including_the_ones_switched_off(html):
+    """[SPEC] A term that is off is drawn grey and labelled off, never
+    omitted, so the reader sees what the model could do as well as what it
+    did. Both directions of the surface energy balance must be present."""
+    assert "function EnergyFlow" in html
+    assert "'sun  off (α = 0)'" in html
+    assert "'sky radiation  off'" in html
+    assert "h_out = 5.7 + 3.8 v" in html
+
+
+def test_energy_flow_reference_conditions_match_the_handover(html):
+    """[SPEC] Session-3 handover §6.2 quotes +19 °F at α 0.20 and −5.5 °F on a
+    clear night, both at the engine's 2 m/s default wind and 700 W/m². The page
+    must reproduce those magnitudes, so it uses the same reference conditions."""
+    assert "hCalm=5.7+3.8*2" in html
+    assert "hWind=5.7+3.8*6" in html
+    assert "I=700" in html
+
+
+def test_orientation_chart_is_suppressed_without_an_orientations_block(html):
+    """[SPEC] Same rule as the results-page panel: four identical bars would
+    say 'orientation does not matter' when the truth is 'not modelled'."""
+    assert "function OrientationChart" in html
+    assert "if(!rows||!rows.length) return null;" in html
+
+
+def test_orientation_chart_reports_the_north_south_spread(html):
+    """[SPEC] The north/south spread is the most robust result in the model
+    because absorptance cancels out of it. It is stated, not left to the eye."""
+    assert "visible condensation than south" in html
+    assert "Trust the comparison more than any single bar" in html

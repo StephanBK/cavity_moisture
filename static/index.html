@@ -484,6 +484,120 @@ function ModelView({inp,res}){
   );
 }
 
+
+/* ---------------- Energy flow on the outer pane ---------------- */
+/* Everything that moves the temperature of the outboard pane, drawn as
+   arrows with the live magnitude from this run. Terms that are switched
+   off are drawn grey and labelled off, never omitted, so the reader sees
+   what the model could do as well as what it did. */
+function EnergyFlow({res, phys, alpha, sky}){
+  const W=760, H=300;
+  const glassPx=14, cavPx=110;
+  const x0=(W-(glassPx*2+cavPx))/2;
+  const xPane=x0, xCav=x0+glassPx, xIgu=xCav+cavPx, yTop=56, yBot=236;
+  const midY=(yTop+yBot)/2;
+  const on=c=>c, off='var(--ink-3)';
+  const sunC = alpha>0 ? 'var(--warm)' : off;
+  const skyC = sky ? 'var(--water)' : off;
+  const arrow=(x1,y1,x2,y2,color,key,dash)=>h('line',{key,x1,y1,x2,y2,stroke:color,strokeWidth:2.2,
+    strokeDasharray:dash||null,markerEnd:`url(#${color==='var(--warm)'?'arwWarm':color==='var(--water)'?'arw':'arwOff'})`});
+  const label=(x,y,txt,color,anchor,bold)=>h('text',{x,y,fontSize:11,fill:color,textAnchor:anchor||'start',
+    fontWeight:bold?500:400},txt);
+  return h('div',{className:'section-wrap',style:{margin:'12px 0 16px'}},
+    h('svg',{viewBox:`0 0 ${W} ${H}`,role:'img',
+      'aria-label':'Energy flows acting on the outer pane: sunlight in, sky radiation out, wind along the face, vent air into the cavity'},
+      h('defs',null,
+        h('marker',{id:'arwWarm',markerWidth:7,markerHeight:7,refX:6,refY:3.5,orient:'auto'},
+          h('path',{d:'M0,0 L7,3.5 L0,7 z',fill:'var(--warm)'})),
+        h('marker',{id:'arwOff',markerWidth:7,markerHeight:7,refX:6,refY:3.5,orient:'auto'},
+          h('path',{d:'M0,0 L7,3.5 L0,7 z',fill:'var(--ink-3)'}))),
+      label(14,26,'Outdoors  −0.4°F (NFRC winter)','var(--ink-3)'),
+      label(W-14,26,'Room','var(--ink-3)','end'),
+
+      h('rect',{x:xPane,y:yTop,width:glassPx,height:yBot-yTop,fill:'var(--pane)',stroke:'#9DB4BF'}),
+      h('rect',{x:xCav,y:yTop,width:cavPx,height:yBot-yTop,fill:'#DCE7EC'}),
+      h('rect',{x:xIgu,y:yTop,width:glassPx,height:yBot-yTop,fill:'var(--pane)',stroke:'#9DB4BF'}),
+      label(xPane+glassPx/2,yBot+18,'outer pane','var(--ink-3)','middle'),
+      label(xCav+cavPx/2,yBot+18,'cavity','var(--ink-3)','middle'),
+      label(xIgu+glassPx/2,yBot+18,'new unit','var(--ink-3)','middle'),
+
+      // 1. Sun: three rays arriving at the outer pane from upper left
+      [0,1,2].map(i=>arrow(xPane-118+i*6, yTop+30+i*20, xPane-8, yTop+58+i*20, sunC,'sun'+i)),
+      label(14,yTop+40, alpha>0?`sun  α ${f1(alpha,2)}`:'sun  off (α = 0)', sunC,'start',true),
+      label(14,yTop+54, alpha>0?`+${f1(phys.sunCalmF)}°F clear noon, 2 m/s`:'', sunC),
+      label(14,yTop+68, alpha>0?`+${f1(phys.sunWindF)}°F at 6 m/s`:'', sunC),
+
+      // 2. Sky radiation: leaving the pane toward upper left, dashed
+      arrow(xPane-6, midY+52, xPane-112, midY+6, skyC,'sky','5,4'),
+      label(14,midY+58, sky?'sky radiation':'sky radiation  off', skyC,'start',true),
+      label(14,midY+72, sky?`${f1(phys.skyDropF)}°F clear night, 2 m/s`:'', skyC),
+      label(14,midY+86, sky?'cloud raises T_sky, switches this off':'', skyC),
+
+      // 3. Wind: along the outer face, top to bottom
+      arrow(xPane-22, yTop+4, xPane-22, yBot-4, 'var(--ink-2)','wind'),
+      label(14,yBot+18,'wind  h_out = 5.7 + 3.8 v','var(--ink-2)','start',true),
+      label(14,yBot+32,'strips absorbed heat, shrinks the sun boost','var(--ink-3)'),
+
+      // 4. Vent supply into the cavity from the room side
+      arrow(xIgu+glassPx+46, midY, xIgu+glassPx+6, midY, 'var(--water)','vent'),
+      label(xIgu+glassPx+52, midY-6, `vent  ${f1(res.summary.ach,2)} ACH`,'var(--water)','start',true),
+      label(xIgu+glassPx+52, midY+9, `${Math.round(res.inputs.vent_interior_fraction*100)}% room air`,'var(--water)'),
+
+      // 5. Resulting cold face temperature
+      h('line',{x1:xCav,y1:yTop-8,x2:xCav,y2:yTop,stroke:'var(--ink-3)'}),
+      label(xCav+4,yTop-13,`cold face ${f1(res.surfaces_at_nfrc_winter_f.t_cold)}°F air-only`,'var(--ink-2)')
+    ),
+    h('p',{className:'hint',style:{marginTop:10}},
+      'T_cold = T_out + f_cold × (T_room − T_out) + ΔT_sun + ΔT_sky, hour by hour. '+
+      ((alpha>0||sky) ? 'Sun and sky act on the outer pane only; ' : 'Neither sun nor sky is switched on in this run, so the last two terms are zero; ')+
+      'the vent sets how much water the cavity is fed, not how cold the glass gets.')
+  );
+}
+
+/* ---------------- Four-facade comparison ---------------- */
+/* Renders only when the API returned an orientations block, which it does
+   only with absorptance above zero. Four identical bars would say
+   "orientation does not matter" when the truth is "not modelled". */
+function OrientationChart({res}){
+  const rows=res.orientations;
+  if(!rows||!rows.length) return null;
+  const W=760, H=210, padL=70, padR=20, top=34, bot=48;
+  const maxV=Math.max(1,...rows.map(r=>r.hours_water_present));
+  const bw=(W-padL-padR)/rows.length, barW=bw*0.32;
+  const yOf=v=>top+(H-top-bot)*(1-v/maxV);
+  const cur=res.inputs.orientation;
+  const north=rows.find(r=>r.orientation==='north'), south=rows.find(r=>r.orientation==='south');
+  const spread = north&&south&&south.hours_water_visible>0
+    ? (north.hours_water_visible/south.hours_water_visible-1)*100 : null;
+  return h('div',{className:'section-wrap',style:{margin:'12px 0 16px'}},
+    h('svg',{viewBox:`0 0 ${W} ${H}`,role:'img',
+      'aria-label':'Wet hours and visible hours per year for the north, east, south and west facades'},
+      h('text',{x:padL,y:18,fontSize:12,fill:'var(--ink-2)',fontWeight:500},'Hours per year by facade, same glass and vent design'),
+      [0,0.5,1].map(f=>h('g',{key:'g'+f},
+        h('line',{x1:padL,y1:yOf(f*maxV),x2:W-padR,y2:yOf(f*maxV),stroke:'var(--line)'}),
+        h('text',{x:padL-8,y:yOf(f*maxV)+4,fontSize:10,fill:'var(--ink-3)',textAnchor:'end'},Math.round(f*maxV).toLocaleString()))),
+      rows.map((r,i)=>{
+        const xc=padL+bw*i+bw/2, isCur=r.orientation===cur;
+        return h('g',{key:r.orientation,opacity:isCur?1:0.72},
+          h('rect',{x:xc-barW-2,y:yOf(r.hours_water_present),width:barW,height:yOf(0)-yOf(r.hours_water_present),fill:'var(--cavity)'}),
+          h('rect',{x:xc+2,y:yOf(r.hours_water_visible),width:barW,height:yOf(0)-yOf(r.hours_water_visible),fill:'var(--water)'}),
+          h('text',{x:xc-barW/2-2,y:yOf(r.hours_water_present)-4,fontSize:10,textAnchor:'middle',fill:'var(--ink-2)'},r.hours_water_present.toLocaleString()),
+          h('text',{x:xc+barW/2+2,y:yOf(r.hours_water_visible)-4,fontSize:10,textAnchor:'middle',fill:'var(--water)'},r.hours_water_visible.toLocaleString()),
+          h('text',{x:xc,y:H-bot+16,fontSize:12,textAnchor:'middle',fill:'var(--ink)',fontWeight:isCur?600:400},
+            r.orientation+(isCur?' (this run)':'')));
+      }),
+      h('rect',{x:padL,y:H-14,width:10,height:10,fill:'var(--cavity)'}),
+      h('text',{x:padL+14,y:H-5,fontSize:10,fill:'var(--ink-2)'},'water present'),
+      h('rect',{x:padL+110,y:H-14,width:10,height:10,fill:'var(--water)'}),
+      h('text',{x:padL+124,y:H-5,fontSize:10,fill:'var(--ink-2)'},`visible (film > ${f1(res.summary.visible_threshold_um,0)} µm)`)
+    ),
+    spread!=null ? h('p',{className:'hint',style:{marginTop:10}},
+      `North shows ${f1(spread,0)} % ${spread>=0?'more':'less'} visible condensation than south. `+
+      'Absorptance is a common factor across all four bars, so a wrong α moves the heights while the ranking and the spread survive. '+
+      'Trust the comparison more than any single bar.') : null
+  );
+}
+
 /* ---------------- Explain ---------------- */
 function ExplainView({inp,res,hour,setHour}){
   const s=res.summary;
@@ -555,6 +669,9 @@ function ExplainView({inp,res,hour,setHour}){
         `drained    ${f1(s.drained_g_per_m2)} g/m²\n`+
         `peak film  `,h('b',null,`${f1(s.peak_surface_water_g_per_m2)} g/m²`),`  (cap 100)`)),
 
+    h('h2',{style:{marginTop:6}},'What acts on the outer pane'),
+    h(EnergyFlow,{res,phys,alpha,sky}),
+
     h('div',{className:'step'},
       h('h3',null,'6. The sky pulls heat out of the glass'),
       h('p',null,'Glass radiates long-wave heat to the sky, and a clear sky is far colder than the air. '+
@@ -563,16 +680,16 @@ function ExplainView({inp,res,hour,setHour}){
         'Cloud raises the sky back toward air temperature and switches the effect off; fog switches it off completely. '+
         'At 277 Park only 42 % of hours are clear or nearly clear, so the cloud data is not optional.'),
       h('p',null, sky
-        ? h('span',null,'Sky radiation is ',h('b',null,'on'),' in this run. On a calm clear NFRC winter night the outer pane sits about ',
+        ? h('span',null,'Sky radiation is ',h('b',null,'on'),' in this run. On a clear NFRC winter night with light wind the outer pane sits about ',
             h('b',null,`${f1(phys.skyDropF)} °F`),' below the air. That gap is measured against the ~11 °F between the cold face and the room dew point.')
         : h('span',null,'Sky radiation is ',h('b',null,'off'),' in this run, so this step contributes nothing and the model reproduces the air-only result. ',
-            'Switched on, a calm clear winter night would pull the pane about ',h('b',null,`${f1(phys.skyDropF)} °F`),' below the air.')),
+            'Switched on, a clear winter night with light wind would pull the pane about ',h('b',null,`${f1(phys.skyDropF)} °F`),' below the air.')),
       M(`T_sky   = 0.0552 × T_air^1.5              (Swinbank, clear sky, kelvin)\n`+
         `        = 0.0552 × ${f1(phys.tAirK)}^1.5 = `,h('b',null,`${f1(phys.tSkyK)} K`),`   (air ${f1(phys.tAirK)} K)\n`+
         `T_sky   → T_air × opacity              cloud: clear 0, cirrus 0.35, water 0.90, fog 1.00\n\n`+
         `q       = ε · σ · F · (T_s⁴ − T_sky⁴)   ε 0.84, F 0.5 (wall sees half sky)\n`+
         `ΔT      = −q / h_out\n`+
-        `        = −${f1(phys.qSky)} / ${f1(phys.hCalm)} = `,h('b',null,`${f1(phys.skyDropC)} °C = ${f1(phys.skyDropF)} °F`),`   calm, clear`)),
+        `        = −${f1(phys.qSky)} / ${f1(phys.hCalm)} = `,h('b',null,`${f1(phys.skyDropC)} °C = ${f1(phys.skyDropF)} °F`),`   clear sky, 2 m/s wind`)),
 
     h('div',{className:'step'},
       h('h3',null,'7. The sun pushes heat back in; wind carries it away'),
@@ -584,16 +701,17 @@ function ExplainView({inp,res,hour,setHour}){
         'That is why north and south facades of the same building no longer return the same answer.'),
       h('p',null, alpha>0
         ? h('span',null,'Absorptance is ',h('b',null,`${f1(alpha,2)}`),' and the facade faces ',h('b',null,String(res.inputs.orientation)),'. ',
-            'On a calm winter noon with 300 W/m² on the glass that is a boost of about ',h('b',null,`+${f1(phys.sunCalmF)} °F`),
-            ', falling to ',h('b',null,`+${f1(phys.sunWindF)} °F`),' when the wind reaches 3 m/s. ',
+            'On a clear winter noon with 700 W/m² on the glass and a 2 m/s breeze that is a boost of about ',h('b',null,`+${f1(phys.sunCalmF)} °F`),
+            ', falling to ',h('b',null,`+${f1(phys.sunWindF)} °F`),' when the wind triples to 6 m/s. ',
             'Absorptance is assumption #6: it depends on the coating and every absolute solar figure scales with it.')
         : h('span',null,'Absorptance is ',h('b',null,'0'),', so the sun is switched off and orientation has no effect in this run. ',
-            'Set a value above zero in the sidebar to switch it on; the four-facade comparison then appears on the results page.')),
+            'Set a value above zero in the sidebar to switch it on; the four-facade comparison then appears here and on the results page.')),
+      h(OrientationChart,{res}),
       M(`h_out   = 5.7 + 3.8 × v                (McAdams; v in m/s, measured at 2 m)\n`+
-        `        = ${f1(phys.hCalm)} calm   ·   ${f1(phys.hWind)} at 3 m/s\n\n`+
+        `        = ${f1(phys.hCalm)} at 2 m/s   ·   ${f1(phys.hWind)} at 6 m/s\n\n`+
         `ΔT      = α × I_poa / h_out            I_poa = beam·cosθ + diffuse + ground-reflected\n`+
-        `        = ${f1(alpha,2)} × 300 / ${f1(phys.hCalm)} = `,h('b',null,`+${f1(phys.sunCalmC)} °C = +${f1(phys.sunCalmF)} °F`),`   calm\n`+
-        `        = ${f1(alpha,2)} × 300 / ${f1(phys.hWind)} = `,h('b',null,`+${f1(phys.sunWindC)} °C = +${f1(phys.sunWindF)} °F`),`   3 m/s wind\n\n`+
+        `        = ${f1(alpha,2)} × 700 / ${f1(phys.hCalm)} = `,h('b',null,`+${f1(phys.sunCalmC)} °C = +${f1(phys.sunCalmF)} °F`),`   2 m/s\n`+
+        `        = ${f1(alpha,2)} × 700 / ${f1(phys.hWind)} = `,h('b',null,`+${f1(phys.sunWindC)} °C = +${f1(phys.sunWindF)} °F`),`   6 m/s\n\n`+
         `T_cold  = T_out + f_cold × (T_room − T_out) + ΔT_sun + ΔT_sky`)),
 
     h('div',{className:'step'},
@@ -626,17 +744,19 @@ function ExplainView({inp,res,hour,setHour}){
 }
 
 /* Worked numbers for steps 6 and 7 at NFRC winter conditions: -18 °C outdoors,
-   clear sky, 300 W/m² on the glass. Mirrors engine/cavity.py exactly so the
-   page can never disagree with the engine. */
+   clear sky, 700 W/m² on the glass (a clear winter noon on south glass),
+   wind 2 m/s (the engine's default when NSRDB has no wind column) and 6 m/s.
+   These are the reference conditions in the session-3 handover (§6.2), so the
+   figures here match it. Mirrors engine/cavity.py constant for constant. */
 function explainPhysics(res, alpha){
   const SIGMA=5.670374419e-8, EPS=0.84, F=0.5;
   const tOutC=-18.0, tAirK=tOutC+273.15;
   const tColdC=(res.surfaces_at_nfrc_winter_f.t_cold-32)*5/9, tSK=tColdC+273.15;
-  const hCalm=5.7, hWind=5.7+3.8*3;
+  const I=700, hCalm=5.7+3.8*2, hWind=5.7+3.8*6;
   const tSkyK=0.0552*Math.pow(tAirK,1.5);
   const qSky=EPS*SIGMA*F*(Math.pow(tSK,4)-Math.pow(tSkyK,4));
   const skyDropC=-qSky/hCalm;
-  const sunCalmC=alpha*300/hCalm, sunWindC=alpha*300/hWind;
+  const sunCalmC=alpha*I/hCalm, sunWindC=alpha*I/hWind;
   const dF=c=>c*9/5;
   return {tAirK,tSkyK,qSky,hCalm,hWind,skyDropC,skyDropF:dF(skyDropC),
           sunCalmC,sunCalmF:dF(sunCalmC),sunWindC,sunWindF:dF(sunWindC)};
