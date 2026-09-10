@@ -43,6 +43,7 @@ from engine.cavity import (
     radiative_surface_drop,
     solar_surface_boost,
     t_from_f,
+    vent_cold_surface_rise,
 )
 from engine.geometry import CavityGeometry
 from engine.psychro import (
@@ -141,6 +142,7 @@ class HourResult:
     surface_water_kg: float
     is_condensing: bool
     is_saturated: bool
+    vent_rise_k: float = 0.0
 
 
 @dataclass
@@ -171,6 +173,8 @@ class RunSummary:
     hours_water_visible: int = 0
     pct_water_visible: float = 0.0
     visible_threshold_kg_per_m2: float = 0.0
+    mean_vent_rise_k: float = 0.0
+    max_vent_rise_k: float = 0.0
     hours: list[HourResult] = field(default_factory=list, repr=False)
 
 
@@ -448,6 +452,7 @@ def run_year(
     substeps: int = 1,
     spinup_passes: int = 1,
     keep_hours: bool = True,
+    u_assembly: float | None = None,
 ) -> RunSummary:
     """Run the moisture balance across a full TMY year.
 
@@ -478,6 +483,12 @@ def run_year(
     spinup_passes
         Extra passes over the year, discarded, so results do not depend on the
         arbitrary starting humidity.
+    u_assembly
+        Assembly U-factor, W/m2K. When given, vented room air is allowed to
+        WARM the cold surface (engine.cavity.vent_cold_surface_rise), so the
+        pane temperature becomes a function of ACH. Default None reproduces
+        the fixed-pane model exactly, which keeps the validation anchors
+        live. The app passes it; tests that pin historic numbers do not.
     """
     n = len(t_out_c)
     if n == 0:
@@ -519,6 +530,8 @@ def run_year(
         hours_saturated = 0
         total_drained = 0.0
         dew_points: list[float] = []
+        vent_rise_sum = 0.0
+        vent_rise_max = 0.0
 
         for i in range(n):
             t_o = t_out_c[i]
@@ -543,6 +556,15 @@ def run_year(
                 if sky_radiation:
                     op = cloud_opacity(cloud_type[i]) if cloud_type is not None else 0.0
                     t_cold += radiative_surface_drop(t_cold, t_o, h_out, opacity=op)
+
+            # Vented room air warms the pane. Off unless U is known, because
+            # the conductances need an absolute scale that f alone lacks.
+            vent_rise = 0.0
+            if u_assembly is not None and ach > 0.0:
+                vent_rise = vent_cold_surface_rise(
+                    t_cold, t_room_c, f_cold, u_assembly, ach, gap_m=gap_m
+                )
+                t_cold += vent_rise
             t_air = cavity_air_temperature(
                 t_cold_c=t_cold,
                 t_warm_c=t_warm,
@@ -579,6 +601,8 @@ def run_year(
 
             total_condensed += hour_condensed
             total_drained += hour_drained
+            vent_rise_sum += vent_rise
+            vent_rise_max = max(vent_rise_max, vent_rise)
             peak_water = max(peak_water, surface_water)
             condensing = hour_condensed > 0.0
             if condensing:
@@ -626,6 +650,7 @@ def run_year(
                         surface_water_kg=surface_water,
                         is_condensing=condensing,
                         is_saturated=w_cav >= w_sat_cold - 1e-15,
+                        vent_rise_k=vent_rise,
                     )
                 )
 
@@ -660,6 +685,8 @@ def run_year(
         hours_water_visible=hours_water_visible,
         pct_water_visible=100.0 * hours_water_visible / n,
         visible_threshold_kg_per_m2=visible_film_kg_per_m2,
+        mean_vent_rise_k=vent_rise_sum / n,
+        max_vent_rise_k=vent_rise_max,
         hours=hours,
     )
 

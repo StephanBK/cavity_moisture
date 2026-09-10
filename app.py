@@ -138,6 +138,10 @@ def _parse_params() -> dict:
     # precedent as u_ip vs u_assembly: never silently reinterpret a request.
     absorptance = _float("absorptance", default=0.0, minimum=0.0, maximum=1.0)
     sky_radiation = _bool("sky_radiation", False)
+    # Vented room air warming the pane. OFF by default, like solar and
+    # sky, so the 676/860-hour anchors stay live. See
+    # engine.cavity.vent_cold_surface_rise for why it is small.
+    pane_coupling = _bool("pane_coupling", False)
     orientation = (request.args.get("orientation") or "south").strip().lower()
     if orientation not in ORIENTATIONS:
         raise BadRequest(
@@ -172,6 +176,7 @@ def _parse_params() -> dict:
         "visible_um": visible_um,
         "absorptance": absorptance,
         "sky_radiation": sky_radiation,
+        "pane_coupling": pane_coupling,
         "orientation": orientation,
         "f_warm": f_warm,
         "f_warm_source": f_warm_source,
@@ -196,6 +201,7 @@ def _run_kwargs(params: dict, weather) -> dict:
         elevation_m=weather.elevation_m,
         # microns -> kg/m2. 1 g/m2 is a 1 um film.
         visible_film_kg_per_m2=params["visible_um"] / 1000.0,
+        u_assembly=params["u_assembly"] if params["pane_coupling"] else None,
         **_surface_balance_kwargs(params, weather, params["orientation"]),
     )
 
@@ -236,6 +242,10 @@ def _summary_dict(summary) -> dict:
         "hours_water_visible": summary.hours_water_visible,
         "pct_water_visible": round(summary.pct_water_visible, 3),
         "visible_threshold_um": round(summary.visible_threshold_kg_per_m2 * 1000.0, 3),
+        # Pane warming from vented room air. 0 at sealed by definition.
+        "mean_vent_rise_k": round(summary.mean_vent_rise_k, 3),
+        "max_vent_rise_k": round(summary.max_vent_rise_k, 3),
+        "max_vent_rise_f": round(summary.max_vent_rise_k * 1.8, 3),
         "hours_saturated": summary.hours_saturated,
         "pct_condensing": round(summary.pct_condensing, 3),
         "condensed_g_per_m2": round(summary.total_condensed_kg_per_m2 * 1000, 3),
@@ -374,6 +384,9 @@ def calculate():
     rh_in          default 35 %. Interior relative humidity.
     ach            default "moderate". A preset name or any number.
     vent_interior  default 1.0. 1 = vents to room, 0 = vents to outdoors.
+    pane_coupling  default 0. 1 lets vented room air warm the cold pane
+                   (pane temperature then depends on ACH). Small effect;
+                   see engine.cavity.vent_cold_surface_rise.
     width_in,
     height_in,
     offset_in      optional. Supplying width and height enables per-window
@@ -402,6 +415,7 @@ def calculate():
                 "r_cavity_ip": round(psychro.r_si_to_ip(params["r_cavity"]), 4),
                 "absorptance": params["absorptance"],
                 "sky_radiation": params["sky_radiation"],
+                "pane_coupling": params["pane_coupling"],
                 "orientation": params["orientation"],
                 "visible_um": params["visible_um"],
                 "t_in_f": params["t_in_f"],
@@ -440,6 +454,7 @@ def calculate():
                 vent_interior_fraction=params["vent_interior"],
                 geometry=params["geometry"], elevation_m=weather.elevation_m,
                 visible_film_kg_per_m2=params["visible_um"] / 1000.0,
+                u_assembly=params["u_assembly"] if params["pane_coupling"] else None,
                 **_surface_balance_kwargs(params, weather, params["orientation"]),
             )
             payload["sweep"] = [
@@ -497,6 +512,7 @@ def export_xlsx():
             t_room_c=common["t_room_c"], rh_room=common["rh_room"],
             vent_interior_fraction=params["vent_interior"],
             geometry=params["geometry"], elevation_m=weather.elevation_m,
+            u_assembly=params["u_assembly"] if params["pane_coupling"] else None,
         )
 
         geometry = params["geometry"]

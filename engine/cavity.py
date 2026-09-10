@@ -223,6 +223,95 @@ def cavity_air_temperature(
     return numerator / denominator
 
 
+def vent_cold_surface_rise(
+    t_cold_c: float,
+    t_room_c: float,
+    f_cold: float,
+    u_assembly: float,
+    ach: float,
+    gap_m: float = 0.0153,
+    h_cold: float = H_CAVITY_DEFAULT,
+) -> float:
+    """Warming of the COLD surface caused by vented room air, K. Returns >= 0
+    whenever the room is warmer than the pane, <= 0 otherwise.
+
+    WHY THIS EXISTS
+    ---------------
+    ``t_from_f`` fixes the pane temperature from outdoor and room air alone,
+    so the pane is identical at 0 ACH and 100 ACH. That is the one place the
+    ANLY-002 companion note ("motion never reduces condensation") overreaches:
+    the mass-transfer coefficient never falls with air speed, but the DRIVING
+    FORCE (W_air - W_sat(T_surface)) does move, because room air arriving in
+    the cavity also carries heat to the glass. This function closes that
+    loop. NRC Canadian Building Digest 4 (Wilson, 1960) documents the effect
+    on room-side glass; here it is applied to the cavity-side face.
+
+    DERIVATION
+    ----------
+    The f-value already encodes a two-conductance network. In a series chain
+    f_cold = R_outboard . U, so the pane's conductance to outdoors and to the
+    room are
+
+        G_out = U / f_cold              G_in = U / (1 - f_cold)
+
+    and t_from_f is exactly their weighted mean. Venting adds a third path in
+    parallel with G_in: room air enters at m_dot (carrying m_dot.cp W/K) and
+    hands its heat to the pane through the cavity film h_cold. Two
+    conductances in series:
+
+        G_vent = 1 / (1/(m_dot.cp) + 1/h_cold)
+
+    Adding a conductance to the room to a node already in balance moves it by
+
+        dT = G_vent . (T_room - T_cold) / (G_out + G_in + G_vent)
+
+    which is what is returned. Applied after solar and sky terms, so those
+    still act on the unvented pane and this term reads the result.
+
+    APPROXIMATION. The vent air warms the whole cavity air node, part of which
+    flows on to the warm surface and straight back to the room. Routing all of
+    it through h_cold to the cold pane is therefore an UPPER bound on the
+    warming, i.e. the most favourable case for room-side venting. Since the
+    result below is small even as an upper bound, the bound is the useful
+    direction.
+
+    WORKED EXAMPLE - 277 Park style stack, f_cold 0.30, U 1.7 W/m2K
+        T_out -5 degC, T_room 21 degC  ->  T_cold = -5 + 0.30 x 26 = 2.8 degC
+        G_out = 1.7/0.30 = 5.67   G_in = 1.7/0.70 = 2.43  W/m2K
+        ACH 20, gap 15.3 mm: m_dot = 20 x 0.0153 x 1.29 / 3600 = 1.10e-4 kg/s
+        m_dot.cp = 0.110 W/K ; series with h_cold 3.0 -> G_vent = 0.106
+        dT = 0.106 x (21 - 2.8) / (5.67 + 2.43 + 0.106) = 0.24 K
+        ACH 100: G_vent = 0.46, dT = 0.97 K
+
+    Room dew point at 70 degF / 35 % RH is 5.4 degC. A pane at 2.8 degC needs
+    2.6 K to clear it; passive venting supplies a quarter of that at 20 ACH
+    and under one degree at the free-exchange limit. The warming mechanism is
+    real and it is an order of magnitude short on a cold day. It only flips
+    hours that were already within about 1 K of the dew point.
+    """
+    if ach < 0:
+        raise ValueError(f"ach cannot be negative, got {ach}")
+    if u_assembly <= 0:
+        raise ValueError(f"u_assembly must be positive, got {u_assembly}")
+    if gap_m <= 0:
+        raise ValueError(f"gap_m must be positive, got {gap_m}")
+    if h_cold <= 0:
+        raise ValueError(f"h_cold must be positive, got {h_cold}")
+    if ach == 0.0:
+        return 0.0
+    # f at either limit means the pane is pinned to one air stream by an
+    # infinite conductance; no finite vent flow can move it.
+    if f_cold <= 0.0 or f_cold >= 1.0:
+        return 0.0
+
+    g_out = u_assembly / f_cold
+    g_in = u_assembly / (1.0 - f_cold)
+    m_dot = ach * gap_m * dry_air_density(t_cold_c) / 3600.0
+    c_vent = m_dot * CP_AIR
+    g_vent = 1.0 / (1.0 / c_vent + 1.0 / h_cold)
+    return g_vent * (t_room_c - t_cold_c) / (g_out + g_in + g_vent)
+
+
 def cavity_dry_air_mass(
     t_air_c: float,
     gap_m: float = 0.0153,
