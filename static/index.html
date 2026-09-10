@@ -250,7 +250,7 @@ function App(){
   const [inp,setInp]=useState({
     address:'277 Park Avenue, New York, NY',
     f_cold:0.013, u_ip:0.12, f_warm:'',
-    orientation:'south', absorptance:0.10, sky_radiation:true,
+    orientation:'south', absorptance:0.10, sky_radiation:true, pane_coupling:true,
     width_in:60, height_in:96, offset_in:0.6024,
     t_in:70, rh_in:35, ach:5, vent_interior:1
   });
@@ -280,7 +280,8 @@ function App(){
       t_in:inp.t_in, rh_in:inp.rh_in, ach:inp.ach, vent_interior:inp.vent_interior,
       width_in:inp.width_in, height_in:inp.height_in, offset_in:inp.offset_in, sweep:'true',
       orientation:inp.orientation, absorptance:inp.absorptance,
-      sky_radiation:inp.sky_radiation?'true':'false', orientations:'true'
+      sky_radiation:inp.sky_radiation?'true':'false', orientations:'true',
+      pane_coupling:inp.pane_coupling?'true':'false'
     });
     if(inp.f_warm!=='') p.set('f_warm',inp.f_warm);
     return p.toString();
@@ -360,7 +361,12 @@ function App(){
         h('input',{type:'checkbox',checked:inp.sky_radiation,
           onChange:e=>set('sky_radiation',e.target.checked)}),
         ' Night-sky radiative cooling'),
-      h('p',{className:'hint'},'Clear skies cool glass below air temperature. Cloud-corrected from NSRDB.')),
+      h('p',{className:'hint'},'Clear skies cool glass below air temperature. Cloud-corrected from NSRDB.'),
+      h('label',{className:'check'},
+        h('input',{type:'checkbox',checked:inp.pane_coupling,
+          onChange:e=>set('pane_coupling',e.target.checked)}),
+        ' Vent air warms the pane'),
+      h('p',{className:'hint'},'Room air entering the cavity carries heat to the cold glass, so pane temperature depends on ACH. Small: under 0.4 K at 20 ACH.')),
 
     h('fieldset',null,h('legend',null,'Vent design'),
       h('div',{className:'achread'},
